@@ -9,6 +9,7 @@ import { DocumentList } from '@/components/feed/DocumentList';
 import { ThreadedComments } from '@/components/feed/ThreadedComments';
 import { AgencySidebar } from '@/components/feed/AgencySidebar';
 import { RelatedDockets } from '@/components/feed/RelatedDockets';
+import { RelatedFederalRegister } from '@/components/feed/RelatedFederalRegister';
 import { useDuckDBService } from '@/lib/duckdb/useDuckDBService';
 import { ExportButton } from '@/components/ExportButton';
 import { Loader2, ArrowLeft } from 'lucide-react';
@@ -131,6 +132,9 @@ export default function DocketDetailPage() {
               docketId={docketId}
               title={stripQuotes(docket.title) || ''}
             />
+
+            {/* Related Federal Register publications — fail-soft if no matches */}
+            <RelatedFederalRegister docketId={docketId} />
 
             {/* Documents */}
             <div className="mt-4">

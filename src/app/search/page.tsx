@@ -9,8 +9,11 @@ import {
   SearchResultCard,
   SearchResultCardSkeleton,
 } from "@/components/SearchResultCard";
+import { FederalRegisterPost } from "@/components/feed/FederalRegisterPost";
 import { useDocketSearch } from "@/lib/search/useDocketSearch";
+import { useDuckDBService } from "@/lib/duckdb/useDuckDBService";
 import type { SearchResult, SearchSort } from "@/lib/search/types";
+import type { FederalRegisterDoc } from "@/lib/fr/types";
 
 const PAGE_SIZE = 20;
 
@@ -32,11 +35,15 @@ function SearchBody() {
   const sortParam = (searchParams.get("sort") as SearchSort | null) ?? "relevance";
 
   const { ensure, status, search, error } = useDocketSearch();
+  const { searchFederalRegister, isReady: duckdbReady } = useDuckDBService();
 
   const [pageCount, setPageCount] = useState(1);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [total, setTotal] = useState(0);
   const [searching, setSearching] = useState(false);
+
+  const [frResults, setFrResults] = useState<FederalRegisterDoc[]>([]);
+  const [frSearching, setFrSearching] = useState(false);
 
   // Reset pagination when query/sort/agency changes
   useEffect(() => {
@@ -47,6 +54,33 @@ function SearchBody() {
   useEffect(() => {
     if (query) void ensure().catch(() => {});
   }, [query, ensure]);
+
+  // Federal Register: separate query path, runs in parallel with the docket
+  // search. Uses DuckDB ILIKE since the FR dataset is too large to ship as
+  // a client-side MiniSearch index. Cancellable so a fast typist doesn't
+  // race conditions across queries.
+  useEffect(() => {
+    if (!query || !duckdbReady) {
+      setFrResults([]);
+      return;
+    }
+    setFrSearching(true);
+    let cancelled = false;
+    searchFederalRegister(query, 10, 0, agency || undefined)
+      .then((rows) => {
+        if (!cancelled) setFrResults(rows);
+      })
+      .catch((err) => {
+        console.error('FR search failed:', err);
+        if (!cancelled) setFrResults([]);
+      })
+      .finally(() => {
+        if (!cancelled) setFrSearching(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [query, agency, duckdbReady, searchFederalRegister]);
 
   // Run the search when query/sort/agency/pageCount changes
   useEffect(() => {
@@ -170,6 +204,9 @@ function SearchBody() {
 
       {results.length > 0 && (
         <>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)] pt-2">
+            Dockets
+          </h3>
           <div className="space-y-3">
             {results.map((r) => (
               <SearchResultCard key={r.docket.docketId} result={r} />
@@ -191,7 +228,36 @@ function SearchBody() {
           </div>
         </>
       )}
+
+      {/* Federal Register section — fail-soft if no matches or DuckDB not ready */}
+      {(frResults.length > 0 || frSearching) && (
+        <section className="pt-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)] mb-2 flex items-center gap-2">
+            Federal Register
+            {frSearching && <Loader2Icon />}
+            {!frSearching && frResults.length > 0 && (
+              <span className="font-normal normal-case text-[var(--muted)]">
+                · {frResults.length} {frResults.length === 1 ? 'match' : 'matches'}
+              </span>
+            )}
+          </h3>
+          <div className="space-y-3">
+            {frResults.map((d) => (
+              <FederalRegisterPost key={d.documentNumber} doc={d} />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
+  );
+}
+
+function Loader2Icon() {
+  return (
+    <span
+      aria-hidden
+      className="inline-block w-3 h-3 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin"
+    />
   );
 }
 

@@ -4,6 +4,7 @@ import { useCallback, useRef } from "react";
 import { useDuckDB, R2_BASE_URL } from "./context";
 import { RegulationsDataTypes } from "@/lib/db/models";
 import { TOPIC_MAPPINGS, type TopicKey } from "@/lib/feedFilters";
+import type { FederalRegisterDoc, FRFilters } from "@/lib/fr/types";
 
 /** Default row limit to prevent OOM in the browser */
 const DEFAULT_LIMIT = 1000;
@@ -32,6 +33,81 @@ const commentsIndexRef = () => {
 const feedSummaryRef = () => {
   return `read_parquet('${R2_BASE_URL}/feed_summary.parquet')`;
 };
+
+/**
+ * Build a read_parquet() reference for federal_register.parquet.
+ * Sourced from federalregister.gov/api/v1, ~793K rows.
+ */
+const federalRegisterRef = () => {
+  return `read_parquet('${R2_BASE_URL}/federal_register.parquet')`;
+};
+
+/**
+ * Strip surrounding quotes from a parquet VARCHAR (the data sometimes carries
+ * literal '"foo"' values for legacy reasons).
+ */
+function stripQuotes(s: unknown): string {
+  if (s == null) return '';
+  return String(s).replace(/^"|"$/g, '');
+}
+
+/**
+ * Normalize one row from federal_register.parquet into the camel-cased
+ * FederalRegisterDoc view used across components. The DuckDB query is expected
+ * to alias docket_ids_json into a parsed VARCHAR[] called `docket_ids`.
+ */
+function normalizeFRRow(row: Record<string, unknown>): FederalRegisterDoc {
+  const rawDocketIds = row.docket_ids;
+  let docketIds: string[] = [];
+  if (Array.isArray(rawDocketIds)) {
+    docketIds = rawDocketIds.map((d) => stripQuotes(d)).filter(Boolean);
+  }
+  return {
+    documentNumber: stripQuotes(row.document_number),
+    title: stripQuotes(row.title),
+    abstract: stripQuotes(row.abstract),
+    documentType: stripQuotes(row.document_type),
+    subtype: stripQuotes(row.subtype),
+    publicationDate: stripQuotes(row.publication_date),
+    effectiveOn: row.effective_on ? stripQuotes(row.effective_on) : null,
+    commentsCloseOn: row.comments_close_on ? stripQuotes(row.comments_close_on) : null,
+    signingDate: row.signing_date ? stripQuotes(row.signing_date) : null,
+    agencySlugs: stripQuotes(row.agency_slugs),
+    docketIds,
+    htmlUrl: stripQuotes(row.html_url),
+    pdfUrl: stripQuotes(row.pdf_url),
+    executiveOrderNumber: row.executive_order_number
+      ? stripQuotes(row.executive_order_number)
+      : null,
+  };
+}
+
+/**
+ * Common SELECT clause for FR queries — projects the parquet columns we need
+ * and parses docket_ids_json into a typed array on the DuckDB side so the
+ * normalizer doesn't have to JSON.parse on the main thread.
+ */
+const FR_SELECT_COLS = `
+  document_number,
+  title,
+  abstract,
+  document_type,
+  subtype,
+  publication_date,
+  effective_on,
+  comments_close_on,
+  signing_date,
+  agency_slugs,
+  CAST(json_extract(docket_ids_json, '$') AS VARCHAR[]) AS docket_ids,
+  html_url,
+  pdf_url,
+  executive_order_number
+`;
+
+/** SQL escape: replace ' with ''. */
+function sqlStr(s: string): string {
+  return s.replace(/'/g, "''");
+}
 
 /**
  * Hook that provides data fetching via DuckDB-WASM + Parquet on R2.
@@ -503,6 +579,126 @@ export function useDuckDBService() {
     [runQuery, isReady, buildCommentsSource]
   );
 
+  /**
+   * Federal Register: paginated browse with optional filters.
+   * Used by the /federal-register page. Reads federal_register.parquet
+   * over HTTP range requests via DuckDB-WASM (no client-side index).
+   */
+  const getRecentFederalRegister = useCallback(
+    async (
+      limit = 20,
+      offset = 0,
+      filters: FRFilters = {}
+    ): Promise<FederalRegisterDoc[]> => {
+      if (!isReady) throw new Error("DuckDB not ready");
+
+      const conditions: string[] = [];
+      if (filters.documentType) {
+        conditions.push(`document_type = '${sqlStr(filters.documentType)}'`);
+      }
+      if (filters.agencySlug) {
+        // agency_slugs is a comma-joined list — substring match keeps the
+        // query simple and pushes down predicates inside DuckDB.
+        conditions.push(`agency_slugs LIKE '%${sqlStr(filters.agencySlug)}%'`);
+      }
+      const dateMap: Record<string, number> = { '7d': 7, '30d': 30, '90d': 90, '365d': 365 };
+      if (filters.dateRange && dateMap[filters.dateRange]) {
+        const days = dateMap[filters.dateRange];
+        conditions.push(
+          `TRY_CAST(publication_date AS DATE) >= CAST(NOW() AS DATE) - INTERVAL '${days}' DAY`
+        );
+      }
+
+      let orderClause: string;
+      if (filters.sortBy === 'oldest') {
+        orderClause = 'ORDER BY publication_date ASC NULLS LAST';
+      } else if (filters.sortBy === 'comment-deadline') {
+        // Surface anything still open for comment, soonest deadline first.
+        conditions.push(`TRY_CAST(comments_close_on AS DATE) >= CAST(NOW() AS DATE)`);
+        orderClause = 'ORDER BY comments_close_on ASC';
+      } else {
+        orderClause = 'ORDER BY publication_date DESC NULLS LAST';
+      }
+
+      const whereClause =
+        conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      const query = `
+        SELECT ${FR_SELECT_COLS}
+        FROM ${federalRegisterRef()}
+        ${whereClause}
+        ${orderClause}
+        LIMIT ${limit} OFFSET ${offset}
+      `;
+      const rows = await runQuery<Record<string, unknown>>(query);
+      return rows.map(normalizeFRRow);
+    },
+    [runQuery, isReady]
+  );
+
+  /**
+   * Federal Register: find publications linked to a specific regulations.gov
+   * docket via FR's docket_ids_json field. Used by the RelatedFederalRegister
+   * section on the docket detail page.
+   *
+   * Match strategy: substring on docket_ids_json with surrounding double
+   * quotes so we don't false-match a docket ID that's a substring of another.
+   */
+  const getFRPublicationsForDocket = useCallback(
+    async (docketId: string, limit = 5): Promise<FederalRegisterDoc[]> => {
+      if (!isReady) throw new Error("DuckDB not ready");
+      const cleanId = stripQuotes(docketId);
+      if (!cleanId) return [];
+
+      const query = `
+        SELECT ${FR_SELECT_COLS}
+        FROM ${federalRegisterRef()}
+        WHERE docket_ids_json LIKE '%"${sqlStr(cleanId)}"%'
+        ORDER BY publication_date DESC NULLS LAST
+        LIMIT ${limit}
+      `;
+      const rows = await runQuery<Record<string, unknown>>(query);
+      return rows.map(normalizeFRRow);
+    },
+    [runQuery, isReady]
+  );
+
+  /**
+   * Federal Register: free-text search via DuckDB ILIKE. Used by the FR
+   * section on /search. Plain substring match — there's no client-side
+   * MiniSearch index for FR (parquet is too large).
+   */
+  const searchFederalRegister = useCallback(
+    async (
+      query: string,
+      limit = 20,
+      offset = 0,
+      agencySlug?: string
+    ): Promise<FederalRegisterDoc[]> => {
+      if (!isReady) throw new Error("DuckDB not ready");
+      const q = query.trim();
+      if (!q) return [];
+
+      const conditions = [
+        `(title ILIKE '%${sqlStr(q)}%' OR abstract ILIKE '%${sqlStr(q)}%')`,
+      ];
+      if (agencySlug) {
+        conditions.push(`agency_slugs LIKE '%${sqlStr(agencySlug)}%'`);
+      }
+
+      const sql = `
+        SELECT ${FR_SELECT_COLS}
+        FROM ${federalRegisterRef()}
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY publication_date DESC NULLS LAST
+        LIMIT ${limit} OFFSET ${offset}
+      `;
+      const rows = await runQuery<Record<string, unknown>>(sql);
+      return rows.map(normalizeFRRow);
+    },
+    [runQuery, isReady]
+  );
+
   return {
     getData,
     getDataCount,
@@ -518,6 +714,9 @@ export function useDuckDBService() {
     getAgencyStats,
     getPopularAgencies,
     getAllAgencyCounts,
+    getRecentFederalRegister,
+    getFRPublicationsForDocket,
+    searchFederalRegister,
     isReady,
   };
 }

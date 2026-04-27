@@ -9,6 +9,7 @@ import { SearchInput } from "./SearchInput";
 const NAV_ITEMS = [
   { href: "/", label: "Home" },
   { href: "/feed", label: "Feed" },
+  { href: "/federal-register", label: "Fed Register" },
   { href: "/agencies", label: "Agencies" },
 ];
 
