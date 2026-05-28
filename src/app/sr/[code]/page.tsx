@@ -26,13 +26,9 @@ import {
 import { getAgencyInfo } from '@/lib/agencyMetadata';
 import { AgencyAvatar } from '@/components/feed/AgencyAvatar';
 import { Loader2 } from 'lucide-react';
+import { stripQuotes } from '@/lib/utils/fieldFormat';
 
 const PAGE_SIZE = 20;
-
-function stripQuotes(s: any): string {
-  if (!s) return '';
-  return String(s).replace(/^"|"$/g, '');
-}
 
 function AgencyPageInner() {
   const params = useParams();

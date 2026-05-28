@@ -2,12 +2,7 @@
 
 import { FileText, Download, ExternalLink } from 'lucide-react';
 import { timeAgo } from '@/lib/agencyMetadata';
-
-/** Strip wrapping quotes from Parquet string values */
-function stripQuotes(s: any): string {
-  if (s == null) return '';
-  return String(s).replace(/^"|"$/g, '');
-}
+import { stripQuotes } from '@/lib/utils/fieldFormat';
 
 interface DocumentListProps {
   documents: any[];

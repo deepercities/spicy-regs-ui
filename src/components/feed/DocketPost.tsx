@@ -13,6 +13,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { getAgencyInfo, timeAgo, formatCount } from '@/lib/agencyMetadata';
+import { stripQuotes, decodeHtml, parseRawJson } from '@/lib/utils/fieldFormat';
 
 interface DocketPostProps {
   item: Record<string, any>;
@@ -21,27 +22,6 @@ interface DocketPostProps {
   /** If true, we're on the detail page — don't render title as link */
   isDetailView?: boolean;
   showComments?: boolean;
-}
-
-function stripQuotes(s: any): string {
-  if (!s) return '';
-  return String(s).replace(/^"|"$/g, '');
-}
-
-function decodeHtml(s: string): string {
-  const doc = typeof document !== 'undefined'
-    ? new DOMParser().parseFromString(s, 'text/html')
-    : null;
-  return doc?.documentElement.textContent || s;
-}
-
-function parseRawJson(item: Record<string, any>) {
-  try {
-    const raw = typeof item.raw_json === 'string' ? JSON.parse(item.raw_json) : item.raw_json;
-    return raw?.data?.attributes || raw?.data || {};
-  } catch {
-    return {};
-  }
 }
 
 export function DocketPost({
@@ -53,7 +33,7 @@ export function DocketPost({
 }: DocketPostProps) {
   const [expanded, setExpanded] = useState(false);
 
-  const attrs = useMemo(() => parseRawJson(item), [item]);
+  const attrs = useMemo(() => parseRawJson(item.raw_json), [item]);
 
   const docketId = stripQuotes(item.docket_id) || '';
   const agencyCode = stripQuotes(item.agency_code) || docketId.split('-')[0] || '';

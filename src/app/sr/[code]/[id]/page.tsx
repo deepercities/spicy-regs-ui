@@ -13,11 +13,7 @@ import { RelatedFederalRegister } from '@/components/feed/RelatedFederalRegister
 import { useDuckDBService } from '@/lib/duckdb/useDuckDBService';
 import { ExportButton } from '@/components/ExportButton';
 import { Loader2, ArrowLeft } from 'lucide-react';
-
-function stripQuotes(s: any): string {
-  if (!s) return '';
-  return String(s).replace(/^"|"$/g, '');
-}
+import { stripQuotes } from '@/lib/utils/fieldFormat';
 
 export default function DocketDetailPage() {
   const params = useParams();

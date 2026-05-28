@@ -4,22 +4,11 @@ import { useState, useCallback, useEffect } from 'react';
 import { Link2, ChevronDown, Loader2, FileText, Download } from 'lucide-react';
 import { stringToColor, getInitials, timeAgo } from '@/lib/agencyMetadata';
 import { useDuckDBService } from '@/lib/duckdb/useDuckDBService';
+import { stripQuotes, decodeHtml } from '@/lib/utils/fieldFormat';
 
 interface ThreadedCommentsProps {
   docketId: string;
   modifyDate?: string;
-}
-
-function stripQuotes(s: any): string {
-  if (!s) return '';
-  return String(s).replace(/^"|"$/g, '');
-}
-
-function decodeHtml(s: string): string {
-  const doc = typeof document !== 'undefined'
-    ? new DOMParser().parseFromString(s, 'text/html')
-    : null;
-  return doc?.documentElement.textContent || s;
 }
 
 function parseCommentData(item: Record<string, any>) {
@@ -115,7 +104,7 @@ function CommentItem({ data }: { data: CommentItemData }) {
               {authorName}
             </span>
             {isOrg && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-[rgba(99,102,241,0.15)] text-[var(--accent-primary)]">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--accent-primary-soft)] text-[var(--accent-primary)]">
                 Organization
               </span>
             )}

@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Download, ChevronDown, Loader2 } from 'lucide-react';
 import { useDuckDBService } from '@/lib/duckdb/useDuckDBService';
 import { useDuckDBRaw } from '@/lib/duckdb/context';
+import { stripQuotes } from '@/lib/utils/fieldFormat';
 
 type ExportFormat = 'csv' | 'json' | 'parquet';
 
@@ -12,11 +13,6 @@ interface ExportButtonProps {
   agencyCode: string;
   docket: Record<string, any> | null;
   documents: any[];
-}
-
-function stripQuotes(s: any): string {
-  if (!s) return '';
-  return String(s).replace(/^"|"$/g, '');
 }
 
 function today(): string {

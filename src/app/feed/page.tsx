@@ -26,13 +26,9 @@ import {
   type TopicKey,
 } from '@/lib/feedFilters';
 import { Flame, Loader2 } from 'lucide-react';
+import { stripQuotes } from '@/lib/utils/fieldFormat';
 
 const PAGE_SIZE = 20;
-
-function stripQuotes(s: any): string {
-  if (!s) return '';
-  return String(s).replace(/^"|"$/g, '');
-}
 
 function DocketFeed() {
   const { getRecentDocketsWithCounts, isReady } = useDuckDBService();
