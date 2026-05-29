@@ -41,6 +41,63 @@ const feedSummaryRef = () => {
   return `read_parquet('${R2_BASE_URL}/feed_summary.parquet')`;
 };
 
+type FeedFilterOpts = {
+  agencyCode?: string;
+  sortBy?: 'recent' | 'popular' | 'open' | 'closed';
+  dateRange?: '7d' | '30d' | '90d' | '365d';
+  docketType?: 'rule' | 'nonrule' | 'other';
+  topic?: Exclude<TopicKey, ''>;
+};
+
+/**
+ * Build the shared WHERE clause for the feed (list + count). Kept in one place
+ * so the result count can never drift from the rows the same filters return.
+ * Mirrors the sort-dependent date column + open/closed window conditions; the
+ * ORDER BY itself is the caller's concern (it doesn't affect membership).
+ */
+function buildFeedWhereClause(opts: FeedFilterOpts): string {
+  const { agencyCode, sortBy = 'recent', dateRange, docketType, topic } = opts;
+  const conditions: string[] = [];
+
+  const upperAgency = agencyCode?.toUpperCase();
+  if (upperAgency) conditions.push(`agency_code = '${upperAgency}'`);
+
+  if (docketType === 'rule') {
+    conditions.push(`docket_type = 'Rulemaking'`);
+  } else if (docketType === 'nonrule') {
+    conditions.push(`docket_type = 'Nonrulemaking'`);
+  } else if (docketType === 'other') {
+    conditions.push(`(docket_type NOT IN ('Rulemaking','Nonrulemaking') OR docket_type IS NULL)`);
+  }
+
+  if (topic && TOPIC_MAPPINGS[topic]) {
+    const def = TOPIC_MAPPINGS[topic];
+    const agencyList = def.agencies.map(a => `'${a.toUpperCase()}'`).join(',');
+    const keywordClauses = def.keywords
+      .map(k => k.replace(/'/g, "''"))
+      .flatMap(k => [`title ILIKE '%${k}%'`, `abstract ILIKE '%${k}%'`])
+      .join(' OR ');
+    conditions.push(`(agency_code IN (${agencyList}) OR (${keywordClauses}))`);
+  }
+
+  const dateMap: Record<string, number> = { '7d': 7, '30d': 30, '90d': 90, '365d': 365 };
+  const dateDays = dateRange ? dateMap[dateRange] : undefined;
+  if (dateDays) {
+    const dateCol = (sortBy === 'open' || sortBy === 'closed')
+      ? 'comment_end_date'
+      : 'COALESCE(date_created, modify_date)';
+    conditions.push(`TRY_CAST(${dateCol} AS TIMESTAMP) >= CAST(NOW() AS TIMESTAMP) - INTERVAL '${dateDays}' DAY`);
+  }
+
+  if (sortBy === 'open') {
+    conditions.push(`TRY_CAST(comment_end_date AS TIMESTAMP) > CAST(NOW() AS TIMESTAMP)`);
+  } else if (sortBy === 'closed') {
+    conditions.push(`TRY_CAST(comment_end_date AS TIMESTAMP) < CAST(NOW() AS TIMESTAMP)`);
+  }
+
+  return conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+}
+
 /**
  * Build a read_parquet() reference for federal_register.parquet.
  * Sourced from federalregister.gov/api/v1, ~793K rows.
@@ -291,62 +348,22 @@ export function useDuckDBService() {
       if (!isReady) throw new Error("DuckDB not ready");
 
       const source = feedSummaryRef();
-      const upperAgency = agencyCode?.toUpperCase();
 
-      // Build conditions
-      const conditions: string[] = [];
-      if (upperAgency) conditions.push(`agency_code = '${upperAgency}'`);
+      // Membership conditions are shared with getFeedCount (buildFeedWhereClause)
+      // so the header count can't drift from the rows these filters return.
+      const whereClause = buildFeedWhereClause({ agencyCode, sortBy, dateRange, docketType, topic });
 
-      if (docketType === 'rule') {
-        conditions.push(`docket_type = 'Rulemaking'`);
-      } else if (docketType === 'nonrule') {
-        conditions.push(`docket_type = 'Nonrulemaking'`);
-      } else if (docketType === 'other') {
-        conditions.push(`(docket_type NOT IN ('Rulemaking','Nonrulemaking') OR docket_type IS NULL)`);
-      }
-
-      // Topic: cross-agency category. Match agency codes OR keywords in title/abstract.
-      // Agencies are an authoritative signal; keywords broaden recall to dockets from
-      // outside the obvious agency set (e.g. an FDA/DEA collab on opioids hitting "drug").
-      if (topic && TOPIC_MAPPINGS[topic]) {
-        const def = TOPIC_MAPPINGS[topic];
-        const agencyList = def.agencies.map(a => `'${a.toUpperCase()}'`).join(',');
-        const keywordClauses = def.keywords
-          .map(k => k.replace(/'/g, "''"))
-          .flatMap(k => [`title ILIKE '%${k}%'`, `abstract ILIKE '%${k}%'`])
-          .join(' OR ');
-        conditions.push(`(agency_code IN (${agencyList}) OR (${keywordClauses}))`);
-      }
-
-      // Date range target depends on sort: comment-window sorts filter on comment_end_date;
-      // recent/popular filter on the docket's modify/create date.
-      const dateMap: Record<string, number> = { '7d': 7, '30d': 30, '90d': 90, '365d': 365 };
-      const dateDays = dateRange ? dateMap[dateRange] : undefined;
-      if (dateDays) {
-        const dateCol = (sortBy === 'open' || sortBy === 'closed')
-          ? 'comment_end_date'
-          : 'COALESCE(date_created, modify_date)';
-        conditions.push(`TRY_CAST(${dateCol} AS TIMESTAMP) >= CAST(NOW() AS TIMESTAMP) - INTERVAL '${dateDays}' DAY`);
-      }
-
-      // Sort + filter logic
+      // Sort order is list-only — it doesn't affect which rows match.
       let orderClause: string;
-      let extraCondition = '';
-
       if (sortBy === 'popular') {
         orderClause = 'ORDER BY comment_count DESC, modify_date DESC';
       } else if (sortBy === 'open') {
-        extraCondition = `TRY_CAST(comment_end_date AS TIMESTAMP) > CAST(NOW() AS TIMESTAMP)`;
         orderClause = 'ORDER BY comment_end_date ASC';
       } else if (sortBy === 'closed') {
-        extraCondition = `TRY_CAST(comment_end_date AS TIMESTAMP) < CAST(NOW() AS TIMESTAMP)`;
         orderClause = 'ORDER BY comment_end_date DESC';
       } else {
         orderClause = 'ORDER BY modify_date DESC';
       }
-
-      if (extraCondition) conditions.push(extraCondition);
-      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
       const query = `
         SELECT docket_id, agency_code, title, abstract, docket_type, modify_date,
@@ -367,6 +384,22 @@ export function useDuckDBService() {
       });
 
       return { dockets, commentCounts };
+    },
+    [runQuery, isReady]
+  );
+
+  /**
+   * Total docket count for the current feed filters. Uses the same WHERE clause
+   * as getRecentDocketsWithCounts so the header count matches the river exactly.
+   * Lets the feed header reflect "N dockets" and update as filters narrow.
+   */
+  const getFeedCount = useCallback(
+    async (opts: FeedFilterOpts = {}): Promise<number> => {
+      if (!isReady) throw new Error("DuckDB not ready");
+      const whereClause = buildFeedWhereClause(opts);
+      const query = `SELECT COUNT(*) AS count FROM ${feedSummaryRef()} ${whereClause}`;
+      const rows = await runQuery<{ count: number }>(query);
+      return Number(rows[0]?.count ?? 0);
     },
     [runQuery, isReady]
   );
@@ -1421,6 +1454,7 @@ export function useDuckDBService() {
     getDocketById,
     getRecentDockets,
     getRecentDocketsWithCounts,
+    getFeedCount,
     getCommentsForDocket,
     getAllCommentsForDocket,
     getDocumentsForDocket,
