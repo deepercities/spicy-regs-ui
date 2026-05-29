@@ -6,11 +6,12 @@ import { Flame } from 'lucide-react';
 
 import { SearchInput } from "./SearchInput";
 
+// Primary nav is deliberately three items. Federal Register (now folded into
+// the feed via the FR toggle) and Lab stay reachable by URL only.
 const NAV_ITEMS = [
-  { href: "/", label: "Home" },
   { href: "/feed", label: "Feed" },
-  { href: "/federal-register", label: "Fed Register" },
   { href: "/agencies", label: "Agencies" },
+  { href: "/about", label: "About" },
 ];
 
 export function Header() {
@@ -35,7 +36,7 @@ export function Header() {
           <nav className="flex items-center gap-0.5">
             {NAV_ITEMS.map((item) => {
               const isActive =
-                (item.href === '/' ? pathname === '/' : pathname === item.href) ||
+                pathname === item.href ||
                 (item.href === '/agencies' && pathname?.startsWith('/sr'));
               return (
                 <Link
