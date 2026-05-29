@@ -17,25 +17,32 @@ export function DemoCallout({ agencyCode, docketId }: DemoCalloutProps) {
   return (
     <div
       className="rounded-xl border border-dashed p-4"
-      style={{ borderColor: 'rgba(217,119,6,0.4)', background: 'rgba(217,119,6,0.06)' }}
+      style={{
+        borderColor: 'color-mix(in srgb, var(--accent-amber) 40%, transparent)',
+        background: 'color-mix(in srgb, var(--accent-amber) 6%, transparent)',
+      }}
     >
       <div className="flex items-center gap-2 mb-1.5">
-        <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium uppercase tracking-wider"
-              style={{ background: 'rgba(217,119,6,0.12)', color: 'var(--accent-amber)', border: '1px solid rgba(217,119,6,0.25)' }}>
+        <span
+          className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium uppercase tracking-wider text-[var(--accent-amber)]"
+          style={{
+            background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--accent-amber) 25%, transparent)',
+          }}
+        >
           demo
         </span>
-        <span className="text-sm font-semibold" style={{ color: 'var(--accent-amber)' }}>
+        <span className="text-sm font-semibold text-[var(--accent-amber)]">
           Per-document comment filtering pending
         </span>
       </div>
       <p className="text-xs text-[var(--muted)] mb-2.5 leading-relaxed">
-        Comments don&apos;t link to specific documents in the data mirror yet — this page can&apos;t
+        Comments don&apos;t link to specific documents in the data mirror yet, so this page can&apos;t
         show &ldquo;the comments on this proposed rule.&rdquo;
       </p>
       <Link
         href={`/sr/${agencyCode}/${encodeURIComponent(docketId)}?tab=comments`}
-        className="text-xs font-semibold"
-        style={{ color: 'var(--accent-primary)' }}
+        className="text-xs font-semibold text-[var(--accent-primary)]"
       >
         See all comments on the parent docket →
       </Link>

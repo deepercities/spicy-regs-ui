@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { FileText, Download } from 'lucide-react';
 import { timeAgo } from '@/lib/agencyMetadata';
 import { stripQuotes } from '@/lib/utils/fieldFormat';
+import { Badge } from '@/components/ui/Badge';
 
 interface DocumentListProps {
   documents: any[];
@@ -71,11 +72,7 @@ export function DocumentList({ documents, loading = false, agencyCode, docketId 
                   {/* Document ID and type */}
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-mono-id text-[var(--muted)] text-xs">{docId}</span>
-                    {docType && (
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--surface-elevated)] text-[var(--muted)]">
-                        {docType}
-                      </span>
-                    )}
+                    {docType && <Badge variant="neutral" size="xs">{docType}</Badge>}
                   </div>
 
                   {/* Title */}

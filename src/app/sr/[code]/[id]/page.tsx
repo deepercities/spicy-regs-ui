@@ -4,20 +4,21 @@ import { useState, useEffect, useMemo, Suspense } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { PageShell } from '@/components/ui/PageShell';
+import { Card } from '@/components/ui/Card';
+import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Tabs, TabsList, TabsTrigger, TabsContent, useTabParam } from '@/components/ui/Tabs';
 import { DocketHeader } from '@/components/docket/DocketHeader';
 import { LifecycleTimeline } from '@/components/docket/LifecycleTimeline';
-import { CommentVolumeChart } from '@/components/docket/CommentVolumeChart';
-import { OrchestrationIndicator } from '@/components/docket/OrchestrationIndicator';
+import { CommentBreakdown, type CommentBreakdownData } from '@/components/docket/CommentBreakdown';
 import { DocumentList } from '@/components/feed/DocumentList';
 import { ThreadedComments } from '@/components/feed/ThreadedComments';
 import { RelatedDockets } from '@/components/feed/RelatedDockets';
 import { RelatedFederalRegister } from '@/components/feed/RelatedFederalRegister';
 import { AgencyIdentity } from '@/components/agency/AgencyIdentity';
 import { useDuckDBService } from '@/lib/duckdb/useDuckDBService';
-import { ExportButton } from '@/components/ExportButton';
 import { Loader2 } from 'lucide-react';
 import { stripQuotes } from '@/lib/utils/fieldFormat';
+import { usePageTitle } from '@/lib/hooks/usePageTitle';
 
 type DocketTab = 'overview' | 'documents' | 'comments';
 const isDocketTab = (raw: string): raw is DocketTab =>
@@ -45,9 +46,9 @@ function DocketDetailInner() {
   const [docsLoading, setDocsLoading] = useState(true);
   const [commentCount, setCommentCount] = useState<number | undefined>();
 
-  // Comments-tab data (lazy: only fetched once that tab is opened).
-  const [volume, setVolume] = useState<{ day: string; n: number }[] | null>(null);
-  const [orchestration, setOrchestration] = useState<{ total: number; unique: number; empty: number } | null>(null);
+  // Overview comment aggregate (lazy: computed the first time the page lands on
+  // the Overview tab). Near-duplicate clustering powers the breakdown.
+  const [aggregate, setAggregate] = useState<CommentBreakdownData | null>(null);
 
   useEffect(() => {
     if (!isReady || !docketId) return;
@@ -71,34 +72,43 @@ function DocketDetailInner() {
       .catch((err) => console.error('Failed to load comment count:', err));
   }, [isReady, docketId, getCommentCounts]);
 
-  // Reset the lazy comments-tab aggregates when the docket changes, so
-  // navigating between dockets on this route segment can't show the previous
-  // docket's volume chart / orchestration ratio (the lazy guard below keys off
-  // `volume === null`).
+  // Reset the lazy aggregate when the docket changes, so navigating between
+  // dockets on this route segment can't show the previous docket's breakdown
+  // (the lazy guard below keys off `aggregate === null`).
   useEffect(() => {
-    setVolume(null);
-    setOrchestration(null);
+    setAggregate(null);
   }, [docketId]);
 
-  // Lazy-load the Comments-tab aggregates the first time that tab is opened.
-  // One round-trip returns both the daily volume and the unique/total totals.
+  // Lazy-load the Overview comment breakdown the first time that tab is shown.
+  // One round-trip returns the daily volume, totals, and near-duplicate
+  // clusters that drive the orchestration read.
   useEffect(() => {
-    if (!isReady || !docketId || tab !== 'comments' || volume !== null) return;
+    if (!isReady || !docketId || tab !== 'overview' || aggregate !== null) return;
     let cancelled = false;
-    getCommentVolumeAndClusters(docketId)
+    getCommentVolumeAndClusters(docketId, 'near')
       .then((res) => {
         if (cancelled) return;
-        setVolume(res.volumeByDay);
-        setOrchestration(res.totals);
+        setAggregate(res);
       })
       .catch((err) => {
         if (cancelled) return;
         console.error('Failed to load comment analytics:', err);
-        setVolume([]);
-        setOrchestration({ total: 0, unique: 0, empty: 0 });
+        setAggregate({
+          totals: { total: 0, unique: 0, empty: 0 },
+          volumeByDay: [],
+          clusters: [],
+          commentStartDate: null,
+          commentEndDate: null,
+        });
       });
     return () => { cancelled = true; };
-  }, [isReady, docketId, tab, volume, getCommentVolumeAndClusters]);
+  }, [isReady, docketId, tab, aggregate, getCommentVolumeAndClusters]);
+
+  // e.g. "Definition of an Investment Advice Fiduciary (Docket EBSA-2023-0014)".
+  // Null while loading so the bare brand shows until the docket resolves.
+  usePageTitle(
+    docket ? `${stripQuotes(docket.title) || docketId} (Docket ${docketId})` : null,
+  );
 
   const commentPeriod = useMemo(() => {
     let start: string | null = null;
@@ -138,17 +148,14 @@ function DocketDetailInner() {
 
   return (
     <PageShell maxWidth="5xl">
-      {/* Breadcrumb + export */}
-      <div className="flex items-center justify-between mb-4">
-        <nav className="text-xs text-[var(--muted)]">
-          <Link href="/feed" className="hover:text-[var(--foreground)]">Feed</Link>
-          {' → '}
-          <Link href={`/sr/${agencyCode}`} className="hover:text-[var(--foreground)]">sr/{agencyCode}</Link>
-          {' → '}
-          <span className="text-[var(--foreground)]">Docket</span>
-        </nav>
-        <ExportButton docketId={docketId} agencyCode={agencyCode} docket={docket} documents={documents} />
-      </div>
+      {/* Breadcrumb */}
+      <nav className="text-xs text-[var(--muted)] mb-4">
+        <Link href="/feed" className="hover:text-[var(--foreground)]">Feed</Link>
+        {' → '}
+        <Link href={`/sr/${agencyCode}`} className="hover:text-[var(--foreground)]">sr/{agencyCode}</Link>
+        {' → '}
+        <span className="text-[var(--foreground)]">Docket</span>
+      </nav>
 
       <div className="flex gap-6">
         {/* Main content */}
@@ -158,8 +165,6 @@ function DocketDetailInner() {
             docketId={docketId}
             title={title}
             docketType={docketType}
-            commentStartDate={commentPeriod.start}
-            commentEndDate={commentPeriod.end}
           />
 
           <Tabs value={tab} onValueChange={(v) => setTab(v as DocketTab)}>
@@ -173,14 +178,44 @@ function DocketDetailInner() {
             <TabsContent value="overview" className="pt-5 flex flex-col gap-6">
               {abstract && (
                 <section>
-                  <h2 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--muted)] mb-2">
-                    Summary
-                  </h2>
-                  <p className="text-sm text-[var(--foreground)] leading-relaxed">{abstract}</p>
+                  <SectionLabel label="Summary" className="mb-2" />
+                  <Card interactive={false} className="p-4">
+                    <p className="text-sm text-[var(--foreground)] leading-relaxed">{abstract}</p>
+                  </Card>
                 </section>
               )}
 
-              <LifecycleTimeline documents={documents} commentEndDate={commentPeriod.end} />
+              <section>
+                <SectionLabel label="Timeline" className="mb-2" />
+                <Card interactive={false} className="p-4">
+                  <LifecycleTimeline
+                    documents={documents}
+                    commentStartDate={commentPeriod.start}
+                    commentEndDate={commentPeriod.end}
+                  />
+                </Card>
+              </section>
+
+              {commentCount !== 0 && (
+                <section>
+                  <SectionLabel
+                    label="Comment activity"
+                    caption={
+                      commentCount != null
+                        ? `${commentCount.toLocaleString()} ${commentCount === 1 ? 'comment' : 'comments'}`
+                        : undefined
+                    }
+                    className="mb-3"
+                  />
+                  {aggregate === null ? (
+                    <Card interactive={false} className="flex justify-center py-8">
+                      <Loader2 size={20} className="animate-spin text-[var(--accent-primary)]" />
+                    </Card>
+                  ) : (
+                    <CommentBreakdown data={aggregate} />
+                  )}
+                </section>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <RelatedDockets docketId={docketId} title={title} />
@@ -200,34 +235,9 @@ function DocketDetailInner() {
 
             {/* Comments */}
             <TabsContent value="comments" className="pt-5 flex flex-col gap-5">
-              {volume === null ? (
-                <div className="flex justify-center py-8">
-                  <Loader2 size={20} className="animate-spin text-[var(--accent-primary)]" />
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-[1fr_240px] gap-5 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
-                  <div>
-                    <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--muted)] mb-2">
-                      Daily comment volume
-                    </h3>
-                    <CommentVolumeChart data={volume} />
-                  </div>
-                  <div>
-                    <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--muted)] mb-2">
-                      Orchestration
-                    </h3>
-                    {orchestration && <OrchestrationIndicator totals={orchestration} />}
-                    <p className="text-[10px] text-[var(--muted-foreground)] mt-2 leading-relaxed">
-                      Unique vs. repeated comments (grouped by normalized text). A high
-                      form-letter share signals an orchestrated campaign.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              <div className="rounded-xl overflow-hidden border border-[var(--border)]">
+              <Card interactive={false} className="overflow-hidden">
                 <ThreadedComments docketId={docketId} modifyDate={stripQuotes(docket.modify_date)} />
-              </div>
+              </Card>
             </TabsContent>
           </Tabs>
         </div>
