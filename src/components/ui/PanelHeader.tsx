@@ -1,5 +1,19 @@
 import type { ReactNode } from 'react';
 
+/**
+ * Editorial section header — the richer companion to {@link SectionLabel}.
+ *
+ * Where `SectionLabel` is a single uppercase eyebrow (+ optional "· caption")
+ * for compact section markers, `PanelHeader` is the three-part block used to
+ * open a full panel: an accent eyebrow, a serif title, an explanatory caption,
+ * and an optional headline finding. Used by the Lab panels, the Agency-profile
+ * panels (Open rulemakings / Top dockets), and the docket Comment-activity
+ * breakdown.
+ *
+ * The eyebrow shares SectionLabel's `tracking-[0.08em]` so the two header
+ * treatments read as one family; PanelHeader's eyebrow is accent-colored
+ * (vs. SectionLabel's muted) to mark it as the lead-in to a titled panel.
+ */
 interface PanelHeaderProps {
   /** Small uppercase function-of-block label, e.g. "Comment uniqueness" */
   label: string;
@@ -14,7 +28,7 @@ interface PanelHeaderProps {
 export function PanelHeader({ label, title, caption, finding }: PanelHeaderProps) {
   return (
     <header className="mb-5">
-      <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--accent-primary)] mb-1.5">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--accent-primary)] mb-1.5">
         {label}
       </div>
       <h2

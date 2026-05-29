@@ -29,6 +29,13 @@ import { Check, ChevronDown } from 'lucide-react';
 export interface FilterSelectOption<T extends string = string> {
   value: T;
   label: React.ReactNode;
+  /**
+   * Compact label shown on the trigger when this option is selected, while the
+   * menu keeps the full `label`. Used so default ("All …") options render as a
+   * short dimension name ("Topic", "Status") in the filter bar — keeps the row
+   * on one line without losing menu clarity.
+   */
+  triggerLabel?: React.ReactNode;
 }
 
 export interface FilterSelectProps<T extends string = string> {
@@ -70,6 +77,10 @@ export function FilterSelect<T extends string = string>({
   placeholder,
   className = '',
 }: FilterSelectProps<T>) {
+  // When the selected option defines a compact triggerLabel, render it instead
+  // of Radix's default (which echoes the full menu label).
+  const selected = options.find((o) => o.value === value);
+  const trigger = selected?.triggerLabel;
   return (
     <Select.Root
       value={toRadix(value)}
@@ -77,11 +88,14 @@ export function FilterSelect<T extends string = string>({
     >
       <Select.Trigger
         aria-label={ariaLabel}
-        className={`filter-chip appearance-none cursor-pointer flex items-center gap-1.5 pr-7 relative ${className}`}
+        className={`filter-chip appearance-none cursor-pointer flex items-center gap-1.5 ${className}`}
       >
         {prefix && <span className="text-[var(--muted)]">{prefix}</span>}
-        <Select.Value placeholder={placeholder} />
-        <Select.Icon className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted)]">
+        <Select.Value placeholder={placeholder}>{trigger ?? undefined}</Select.Value>
+        {/* Caret flows inline (not absolute): .filter-chip is unlayered CSS and
+            its padding beats Tailwind's layered pr-* utility, so an absolute
+            caret + pr-7 overlapped the text. Inline + gap keeps it clear. */}
+        <Select.Icon className="text-[var(--muted)] -mr-0.5">
           <ChevronDown size={14} />
         </Select.Icon>
       </Select.Trigger>
