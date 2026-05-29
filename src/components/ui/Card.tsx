@@ -13,8 +13,7 @@ import { Slot } from '@radix-ui/react-slot';
  *   Used by SearchResultCard, FederalRegisterPost, MiniDocketCard,
  *   MiniFRCard.
  * - `gradient` — the `.card-gradient` with the subtle inner-gradient
- *   border treatment. Used by AgencyCard, AgencySidebar, the home-page
- *   feature cards.
+ *   border treatment. Used by AgencyIdentity and the home-page feature cards.
  * - `post` — the heavier `.docket-post` with the accent-primary border.
  *   Used by DocketPost.
  *
