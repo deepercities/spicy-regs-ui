@@ -144,6 +144,22 @@ interface AgencyJson {
   favicon: string | null;
 }
 
+/**
+ * Deterministic avatar color for agencies without a curated brand color.
+ * Hashes the code to a hue but pins lightness + chroma to the same muted band
+ * as the curated `--agency-*` palette (see globals.css), so the long tail of
+ * uncurated agencies reads as distinct, in-key colors rather than a single
+ * flat `--agency-default` indigo.
+ */
+export function deriveAgencyColor(seed: string): string {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = seed.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = Math.abs(hash) % 360;
+  return `oklch(0.56 0.072 ${hue})`;
+}
+
 /** Build lookup map from agencies.json */
 const AGENCY_MAP = new Map<string, AgencyInfo>();
 for (const entry of agenciesData as AgencyJson[]) {
@@ -153,7 +169,7 @@ for (const entry of agenciesData as AgencyJson[]) {
     name: entry.name,
     shortName: entry.code,
     description: entry.description || 'Federal regulatory agency.',
-    color: extras.color || 'var(--agency-default)',
+    color: extras.color || deriveAgencyColor(entry.code),
     website: entry.website,
     favicon: entry.favicon,
     relatedAgencies: extras.relatedAgencies || [],
@@ -177,7 +193,7 @@ export function getAgencyInfo(code: string): AgencyInfo {
     name: upper,
     shortName: upper,
     description: 'Federal regulatory agency.',
-    color: 'var(--agency-default)',
+    color: deriveAgencyColor(upper),
     website: null,
     favicon: null,
     relatedAgencies: [],

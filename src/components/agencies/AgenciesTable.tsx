@@ -127,7 +127,7 @@ export function AgenciesTable({ groups, counts, volume }: AgenciesTableProps) {
                 <Link
                   key={a.code}
                   href={`/sr/${a.code}`}
-                  className="grid items-center py-2.5 border-t border-[var(--border-subtle)] first:border-t-0 hover:bg-[var(--surface-elevated)] transition-colors rounded-md"
+                  className="grid items-center py-2.5 border-t border-[var(--border-subtle)] first:border-t-0 hover:bg-[var(--surface-elevated)] transition-colors rounded-[6px]"
                   style={{ gridTemplateColumns: GRID }}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
