@@ -8,5 +8,5 @@ import type { ClosingSignal } from '../signals';
  * used on feed posts and the docket header.
  */
 export function Closing({ data }: { data: ClosingSignal }) {
-  return <StatusTag commentEndDate={data.commentEndDate} />;
+  return <StatusTag commentEndDate={data.commentEndDate} size="compact" />;
 }

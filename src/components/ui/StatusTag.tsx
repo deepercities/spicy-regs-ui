@@ -11,6 +11,12 @@ export interface StatusTagProps {
    * state is derived from commentEndDate.
    */
   state?: 'open' | 'closed' | 'final';
+  /**
+   * Typography variant. `default` (text-xs / medium) is used on feed posts and
+   * headers; `compact` (text-[11px] / bold) matches the discovery-rail readouts
+   * so every metric in the rail renders at the same size.
+   */
+  size?: 'default' | 'compact';
   className?: string;
 }
 
@@ -20,10 +26,12 @@ export interface StatusTagProps {
  * scale everywhere (see lib/deadline). Renders nothing when there's no
  * deadline signal to show (no date and no forced state).
  */
-export function StatusTag({ commentEndDate, state, className = '' }: StatusTagProps) {
+export function StatusTag({ commentEndDate, state, size = 'default', className = '' }: StatusTagProps) {
+  const typeClasses = size === 'compact' ? 'text-[11px] font-bold' : 'text-xs font-medium';
+
   if (state === 'final') {
     return (
-      <span className={`inline-flex items-center gap-1.5 text-xs font-medium text-[var(--muted)] ${className}`}>
+      <span className={`inline-flex items-center gap-1.5 ${typeClasses} text-[var(--muted)] ${className}`}>
         <span className="w-1.5 h-1.5 rounded-full bg-[var(--muted)]" />
         Final rule
       </span>
@@ -35,7 +43,7 @@ export function StatusTag({ commentEndDate, state, className = '' }: StatusTagPr
 
   if (isClosed) {
     return (
-      <span className={`inline-flex items-center gap-1.5 text-xs font-medium text-[var(--muted)] ${className}`}>
+      <span className={`inline-flex items-center gap-1.5 ${typeClasses} text-[var(--muted)] ${className}`}>
         <span className="w-1.5 h-1.5 rounded-full bg-[var(--muted)]" />
         Comment period closed
       </span>
@@ -47,7 +55,7 @@ export function StatusTag({ commentEndDate, state, className = '' }: StatusTagPr
   const color = DEADLINE_COLOR_VAR[deadlineLevel(days)];
   return (
     <span
-      className={`inline-flex items-center gap-1.5 text-xs font-medium ${className}`}
+      className={`inline-flex items-center gap-1.5 ${typeClasses} ${className}`}
       style={{ color }}
     >
       <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: color }} />
