@@ -55,6 +55,11 @@ export function AgencyIdentity({
   const dept = useMemo(() => getParentDept(agencyCode), [agencyCode]);
   const ctaHref = href ?? `/sr/${agencyCode}`;
 
+  // Some agencies ARE their own parent department (e.g. EPA → "Environmental
+  // Protection Agency"), so the dept line would just echo the name. Suppress it
+  // in that case rather than printing the agency name twice.
+  const showDept = dept && dept !== agency.name;
+
   const { getAgencyStats, isReady } = useDuckDBService();
   const [fetched, setFetched] = useState<AgencyStats | undefined>();
   const stats = statsProp ?? fetched;
@@ -98,7 +103,7 @@ export function AgencyIdentity({
         <div className="text-xs font-semibold text-[var(--accent-primary)]">
           sr/{agencyCode}
         </div>
-        <div className="text-[11px] text-[var(--muted)] mt-1">{dept}</div>
+        {showDept && <div className="text-[11px] text-[var(--muted)] mt-1">{dept}</div>}
 
         <p className="text-xs text-[var(--muted)] leading-relaxed mt-3 mb-4 line-clamp-3"
            style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>

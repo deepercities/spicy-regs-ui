@@ -149,7 +149,7 @@ interface AgencyJson {
  * Hashes the code to a hue but pins lightness + chroma to the same muted band
  * as the curated `--agency-*` palette (see globals.css), so the long tail of
  * uncurated agencies reads as distinct, in-key colors rather than a single
- * flat `--agency-default` indigo.
+ * flat `--agency-default` prussian.
  */
 export function deriveAgencyColor(seed: string): string {
   let hash = 0;
@@ -160,7 +160,15 @@ export function deriveAgencyColor(seed: string): string {
   return `oklch(0.56 0.072 ${hue})`;
 }
 
-/** Build lookup map from agencies.json */
+/**
+ * Build lookup map from agencies.json.
+ *
+ * `favicon` is pre-validated by scripts/validate_favicons.mjs: it's either a
+ * Google favicon URL confirmed to serve a real icon of at least the Avatar's
+ * quality floor, or `null`. Domains where Google has no favicon (it would paint
+ * a generic globe) and icons below the floor are already nulled there, so the
+ * Avatar can use this value as-is and fall back to initials on `null`.
+ */
 const AGENCY_MAP = new Map<string, AgencyInfo>();
 for (const entry of agenciesData as AgencyJson[]) {
   const extras = CURATED_EXTRAS[entry.code] || {};
@@ -316,6 +324,35 @@ export function getAllKnownAgenciesByDept(): { dept: string; agencies: AgencyInf
     ordered.push({ dept: UNGROUPED_DEPT, agencies: ungrouped });
   }
   return ordered;
+}
+
+/**
+ * Agencies to surface as "related" on the profile page. Prefers the curated
+ * cross-department picks (EPA → DOE, DOT, …); when an agency has none — most
+ * don't — falls back to its parent-department siblings so every profile still
+ * shows real connections. The agency itself and any unknown/duplicate codes are
+ * filtered out, and the list is capped at `limit`.
+ */
+export function getRelatedAgencies(code: string, limit = 6): AgencyInfo[] {
+  const upper = code.toUpperCase();
+  const curated = getAgencyInfo(upper).relatedAgencies;
+  let codes: string[] = curated && curated.length > 0 ? curated : [];
+  if (codes.length === 0) {
+    const dept = getParentDept(upper);
+    const group = getAllKnownAgenciesByDept().find((g) => g.dept === dept);
+    codes = (group?.agencies ?? []).map((a) => a.code);
+  }
+
+  const seen = new Set<string>([upper]);
+  const out: AgencyInfo[] = [];
+  for (const c of codes) {
+    const cc = c.toUpperCase();
+    if (seen.has(cc) || !AGENCY_MAP.has(cc)) continue;
+    seen.add(cc);
+    out.push(getAgencyInfo(cc));
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 /** Generate a deterministic color for avatars based on a string */

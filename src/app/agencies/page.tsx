@@ -23,19 +23,34 @@ export default function AgenciesPage() {
   useEffect(() => {
     if (!isReady) return;
     let cancelled = false;
-    // Two queries total — counts (docket + comment GROUP BYs) and ONE batched
-    // monthly-volume call for every agency's sparkline. No per-row fan-out.
-    getAllAgencyCounts()
-      .then((c) => { if (!cancelled) setCounts(c); })
-      .catch((err) => console.error('agency counts:', err));
-    getAgencyMonthlyVolumeBatch(allCodes, 12)
-      .then((v) => { if (!cancelled) setVolume(v); })
-      .catch((err) => console.error('agency volume:', err));
+    (async () => {
+      // Counts (cheap: docket + comment-index GROUP BYs) drive the table rows,
+      // so fetch them first and paint. Sparklines render flat until volume lands.
+      try {
+        const c = await getAllAgencyCounts();
+        if (!cancelled) setCounts(c);
+      } catch (err) {
+        console.error('agency counts:', err);
+      }
+      // Defer the one batched sparkline scan (full documents.parquet, ~57MB)
+      // until the table has painted, so the directory is interactive before the
+      // heavy scan runs. Cached results make repeat visits instant regardless.
+      const fire = () => {
+        getAgencyMonthlyVolumeBatch(allCodes, 12)
+          .then((v) => { if (!cancelled) setVolume(v); })
+          .catch((err) => console.error('agency volume:', err));
+      };
+      if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(fire, { timeout: 2000 });
+      } else {
+        setTimeout(fire, 0);
+      }
+    })();
     return () => { cancelled = true; };
   }, [isReady, allCodes, getAllAgencyCounts, getAgencyMonthlyVolumeBatch]);
 
   return (
-    <PageShell maxWidth="5xl" mainClassName="max-w-5xl mx-auto px-4 py-8">
+    <PageShell maxWidth="4xl">
       <SectionLabel label="Directory" />
       <h1 className="font-serif text-3xl text-[var(--foreground)] mt-1 mb-5">Agencies</h1>
 

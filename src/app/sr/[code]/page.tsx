@@ -8,13 +8,16 @@ import { LifecyclePanel } from '@/components/lab/LifecyclePanel';
 import { OpenRulemakings } from '@/components/agency/OpenRulemakings';
 import { TopDockets } from '@/components/agency/TopDockets';
 import { AgencyMasthead } from '@/components/agency/AgencyMasthead';
+import { RelatedAgencies } from '@/components/agency/RelatedAgencies';
+import { ViewAllDocketsCard } from '@/components/agency/ViewAllDocketsCard';
+import { InView } from '@/components/ui/InView';
 
 export default function AgencyProfilePage() {
   const params = useParams();
   const agencyCode = ((params.code as string) || '').toUpperCase();
 
   return (
-    <PageShell maxWidth="5xl">
+    <PageShell maxWidth="4xl">
       {/* Breadcrumb */}
       <nav className="text-xs text-[var(--muted)] mb-4">
         <Link href="/agencies" className="hover:text-[var(--foreground)]">Agencies</Link>
@@ -37,9 +40,20 @@ export default function AgencyProfilePage() {
         <TopDockets agencyCode={agencyCode} />
       </div>
 
-      {/* 4 — Interpretive data viz */}
-      <LifecyclePanel agencyCode={agencyCode} />
-      <AgencyActivityPanel agencyCode={agencyCode} />
+      {/* 4 — Interpretive data viz. Deferred until scrolled near: each panel's
+          mount fires a full documents.parquet scan, so the masthead + open/top
+          dockets stay interactive and the scans only run if the user reads on. */}
+      <InView minHeight={420}>
+        <LifecyclePanel agencyCode={agencyCode} />
+      </InView>
+      <InView minHeight={420}>
+        <AgencyActivityPanel agencyCode={agencyCode} />
+      </InView>
+
+      {/* 5 — Onward: sibling agencies + a full docket browse, so the page ends
+          with somewhere to go rather than trailing off after the viz. */}
+      <RelatedAgencies agencyCode={agencyCode} />
+      <ViewAllDocketsCard agencyCode={agencyCode} />
     </PageShell>
   );
 }

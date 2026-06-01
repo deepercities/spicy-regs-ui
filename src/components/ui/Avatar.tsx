@@ -15,8 +15,23 @@ import { cn } from '@/lib/utils/cn';
  * Radix's `Image` only mounts visible content once the underlying <img>
  * resolves successfully, so the favicon-with-fallback behaviour comes for
  * free with no error-state bookkeeping.
+ *
+ * Quality floor: agency favicons vary wildly — some domains only expose a
+ * 16px `/favicon.ico` or a tiny shared parent-department mark. Those upscale
+ * into a blurry smear at avatar sizes. Once the image loads we inspect its
+ * intrinsic resolution and, if the smaller side is below {@link QUALITY_FLOOR_PX},
+ * discard it and show the colored initials instead — a clean letter beats a
+ * mushy icon. Using the *min* dimension also rejects short, wide wordmarks.
  */
 export type AvatarSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+
+/**
+ * Minimum intrinsic dimension (px) a favicon must have to be shown. Below this
+ * the Avatar falls back to initials. 48 rejects the common 16/32px favicons and
+ * Google's generic globe placeholder while keeping genuinely hi-res icons.
+ * Raise for stricter, lower for more permissive.
+ */
+const QUALITY_FLOOR_PX = 48;
 
 export interface AvatarProps {
   /** Display name used to derive initials + a deterministic color. */
@@ -60,6 +75,36 @@ export function Avatar({
   const initials = fallback ?? getInitials(name);
   const bg = color ?? stringToColor(name);
 
+  // Set true once a loaded image is judged too low-res to render (see
+  // QUALITY_FLOOR_PX). Reset whenever the source changes.
+  const [belowFloor, setBelowFloor] = React.useState(false);
+  React.useEffect(() => { setBelowFloor(false); }, [src]);
+
+  // Radix only mounts the DOM <img> after its internal loader reports the src
+  // as loaded, so by the time this ref fires the bitmap is decoded and its
+  // intrinsic size is known. We measure off the ref rather than an `onLoad`
+  // prop because a cached image usually completes before React can attach the
+  // handler — `img.complete` covers that case.
+  const measureQuality = React.useCallback((img: HTMLImageElement | null) => {
+    if (!img) return;
+    const judge = () => {
+      const min = Math.min(img.naturalWidth, img.naturalHeight);
+      if (min > 0 && min < QUALITY_FLOOR_PX) setBelowFloor(true);
+    };
+    if (img.complete && img.naturalWidth > 0) judge();
+    else img.addEventListener('load', judge, { once: true });
+  }, []);
+
+  // Once rejected, hand Radix an `undefined` src so it transitions to its
+  // `error` state (its loader treats any falsy src as an error) — that hides
+  // the <img> and reveals the Fallback. We use `undefined` rather than `''`
+  // because the transient re-render after rejection still reports `loaded` for
+  // one frame and renders the <img>; an empty-string src there triggers a
+  // browser warning + page re-fetch, whereas `undefined` omits the attribute.
+  // Unmounting the Image ourselves would leave Radix's status stuck at
+  // `loaded` (blank), so we keep it mounted and just drop the src.
+  const effectiveSrc = belowFloor ? undefined : (src ?? undefined);
+
   return (
     <RadixAvatar.Root
       className={cn('inline-flex items-center justify-center align-middle overflow-hidden rounded-full flex-shrink-0', className)}
@@ -67,7 +112,8 @@ export function Avatar({
     >
       {src && (
         <RadixAvatar.Image
-          src={src}
+          ref={measureQuality}
+          src={effectiveSrc}
           alt={`${name} icon`}
           className="w-full h-full object-contain bg-white p-1"
         />
@@ -75,10 +121,10 @@ export function Avatar({
       <RadixAvatar.Fallback
         className={`w-full h-full flex items-center justify-center font-bold text-white tracking-wide ${SIZE_TEXT[size]}`}
         style={{ backgroundColor: bg }}
-        // When `src` is set we briefly defer the fallback to let the image
-        // load and avoid a flash. When no `src`, omit `delayMs` entirely so
-        // Radix renders the fallback synchronously on first paint.
-        delayMs={src ? 200 : undefined}
+        // While a candidate image is still in play we briefly defer the
+        // fallback to avoid a flash. Once rejected (or no `src`), omit
+        // `delayMs` so Radix renders the initials synchronously.
+        delayMs={src && !belowFloor ? 200 : undefined}
       >
         {initials}
       </RadixAvatar.Fallback>

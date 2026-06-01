@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Search } from 'lucide-react';
 import { Avatar } from '@/components/ui/Avatar';
@@ -21,6 +21,8 @@ interface AgenciesTableProps {
 }
 
 const GRID = '2.4fr 1fr 1fr 1.4fr 0.5fr';
+/** Stable empty series so a sparkline-less row keeps a constant prop reference. */
+const EMPTY_SERIES: number[] = [];
 const SORTS: { key: SortKey; label: string }[] = [
   { key: 'az', label: 'A–Z' },
   { key: 'active', label: 'Most active' },
@@ -51,11 +53,32 @@ function densify(series: { month: string; n: number }[], months: string[]): numb
  */
 export function AgenciesTable({ groups, counts, volume }: AgenciesTableProps) {
   const [query, setQuery] = useState('');
+  // Debounced copy that actually drives filtering, so a 194-row filter+sort
+  // (and its sparkline rows) doesn't recompute on every keystroke.
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [sort, setSort] = useState<SortKey>('active');
   const months = useMemo(() => recentMonths(12), []);
 
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQuery(query), 200);
+    return () => clearTimeout(id);
+  }, [query]);
+
+  // Densify every agency's series once per volume/months change, so each row
+  // gets a STABLE array reference. Combined with the memoized Sparkline, this
+  // keeps the 194 sparklines from re-rendering on filter/sort changes.
+  const densified = useMemo(() => {
+    const m = new Map<string, number[]>();
+    for (const g of groups) {
+      for (const a of g.agencies) {
+        m.set(a.code, densify(volume.get(a.code) ?? [], months));
+      }
+    }
+    return m;
+  }, [groups, volume, months]);
+
   const visibleGroups = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = debouncedQuery.trim().toLowerCase();
     const cmp = (a: AgencyInfo, b: AgencyInfo) => {
       if (sort === 'az') return a.name.localeCompare(b.name);
       if (sort === 'comments') return (counts[b.code]?.comments ?? 0) - (counts[a.code]?.comments ?? 0);
@@ -69,7 +92,7 @@ export function AgenciesTable({ groups, counts, volume }: AgenciesTableProps) {
           .sort(cmp),
       }))
       .filter((g) => g.agencies.length > 0);
-  }, [groups, counts, sort, query]);
+  }, [groups, counts, sort, debouncedQuery]);
 
   return (
     <div>
@@ -111,7 +134,7 @@ export function AgenciesTable({ groups, counts, volume }: AgenciesTableProps) {
           <Card interactive={false} className="px-4">
             {/* Header row */}
             <div
-              className="grid items-center py-2 border-b border-[var(--border)] text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--muted)]"
+              className="grid items-center py-2 border-b border-[var(--border)] text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--muted)]"
               style={{ gridTemplateColumns: GRID }}
             >
               <div>Agency</div>
@@ -127,7 +150,7 @@ export function AgenciesTable({ groups, counts, volume }: AgenciesTableProps) {
                 <Link
                   key={a.code}
                   href={`/sr/${a.code}`}
-                  className="grid items-center py-2.5 border-t border-[var(--border-subtle)] first:border-t-0 hover:bg-[var(--surface-elevated)] transition-colors rounded-[6px]"
+                  className="grid items-center py-2.5 border-t border-[var(--border-subtle)] first:border-t-0 hover:bg-[var(--surface-elevated)] transition-colors"
                   style={{ gridTemplateColumns: GRID }}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
@@ -146,7 +169,7 @@ export function AgenciesTable({ groups, counts, volume }: AgenciesTableProps) {
                     {c ? formatCount(c.comments) : '—'}
                   </div>
                   <div className="flex justify-end">
-                    <Sparkline data={densify(volume.get(a.code) ?? [], months)} width={90} height={20} />
+                    <Sparkline data={densified.get(a.code) ?? EMPTY_SERIES} width={90} height={20} />
                   </div>
                   <div className="text-right text-sm text-[var(--accent-primary)]">
                     →

@@ -31,7 +31,7 @@ export function MiniDocketCard({
   return (
     <Link
       href={`/sr/${agencyCode}/${encodeURIComponent(docketId)}`}
-      className="flex items-center gap-3 py-2.5 border-t border-[var(--border-subtle)] first:border-t-0 hover:bg-[var(--surface-elevated)] transition-colors rounded-md px-1"
+      className="flex items-center gap-3 py-2.5 border-t border-[var(--border-subtle)] first:border-t-0 hover:bg-[var(--surface-elevated)] transition-colors px-1"
     >
       <div className="flex-1 min-w-0">
         <div className="text-sm text-[var(--foreground)] leading-snug truncate">
