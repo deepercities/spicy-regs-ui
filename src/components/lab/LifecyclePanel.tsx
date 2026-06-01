@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Group } from '@visx/group';
 import { Bar, Line } from '@visx/shape';
@@ -11,6 +11,7 @@ import { useDuckDBService } from '@/lib/duckdb/useDuckDBService';
 import { useDuckDB } from '@/lib/duckdb/context';
 import { getAgencyInfo } from '@/lib/agencyMetadata';
 import { PanelHeader } from '@/components/ui/PanelHeader';
+import { Card } from '@/components/ui/Card';
 import { DemoPill } from '@/components/ui/DemoPill';
 
 interface Summary {
@@ -25,6 +26,25 @@ interface Sample {
 interface Stuck {
   docket_id: string; agency_code: string; title: string;
   proposed_date: string; days_open: number;
+}
+interface Benchmark {
+  n: number; agencyCount: number;
+  p10: number; p25: number; p50: number; p75: number; p90: number;
+}
+
+/**
+ * Frame an agency's median duration against the all-agency median, choosing
+ * the most readable form: "in line with" near parity, a percentage when the
+ * gap is moderate, and a multiplier once the agency runs more than ~2× slow.
+ */
+function durationComparison(agencyP50: number, benchP50: number): string {
+  if (!benchP50) return '';
+  const ratio = agencyP50 / benchP50;
+  const benchLabel = `the all-agency median of ${Math.round(benchP50)} days`;
+  if (Math.abs(ratio - 1) < 0.05) return `roughly in line with ${benchLabel}`;
+  if (ratio < 1) return `about ${Math.round((1 - ratio) * 100)}% faster than ${benchLabel}`;
+  if (ratio < 2) return `about ${Math.round((ratio - 1) * 100)}% slower than ${benchLabel}`;
+  return `about ${ratio.toFixed(1)}× ${benchLabel}`;
 }
 
 const TOP_N = 8;
@@ -43,15 +63,27 @@ interface LifecyclePanelProps {
 
 export function LifecyclePanel({ agencyCode }: LifecyclePanelProps = {}) {
   const { runQuery } = useDuckDB();
-  const { getRulemakingLifecycles, isReady } = useDuckDBService();
+  const { getRulemakingLifecycles, getRulemakingLifecycleBenchmark, isReady } = useDuckDBService();
   const single = !!agencyCode;
 
   const [topAgencies, setTopAgencies] = useState<string[]>([]);
   const [summary, setSummary] = useState<Summary[]>([]);
   const [completedSample, setCompletedSample] = useState<Sample[]>([]);
   const [stuck, setStuck] = useState<Stuck[]>([]);
+  const [benchmark, setBenchmark] = useState<Benchmark | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // All-agency benchmark — government-wide, independent of which agency is in
+  // view, so it loads once on the profile and contextualizes the median.
+  useEffect(() => {
+    if (!isReady || !single) return;
+    let cancelled = false;
+    getRulemakingLifecycleBenchmark()
+      .then(b => { if (!cancelled) setBenchmark(b); })
+      .catch(err => console.error('LifecyclePanel benchmark:', err));
+    return () => { cancelled = true; };
+  }, [isReady, single, getRulemakingLifecycleBenchmark]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -142,11 +174,10 @@ export function LifecyclePanel({ agencyCode }: LifecyclePanelProps = {}) {
 
   const caption = single ? (
     <>
-      A federal rule moves through a docket as a{' '}
-      <span className="font-medium">Proposed Rule</span> → public comment period →{' '}
-      <span className="font-medium">Final Rule</span>. The strip below shows{' '}
-      <span className="font-mono-id">{agencyCode}</span>&rsquo;s distribution of completed
-      rulemaking durations (days from proposal to final), with the median marked.
+<span className="font-mono-id">{agencyCode}</span>&rsquo;s distribution of completed
+      rulemaking durations, in days from{' '}
+      <span className="font-medium">Proposed Rule</span> to <span className="font-medium">Final
+      Rule</span>, with the median marked. The amber line marks the all-agency median.
     </>
   ) : (
     <>
@@ -172,6 +203,11 @@ export function LifecyclePanel({ agencyCode }: LifecyclePanelProps = {}) {
               <strong>{Math.round(orderedSummary[0].p50)} days</strong> across{' '}
               {orderedSummary[0].n.toLocaleString()} completed rulemakings (p10–p90:{' '}
               {Math.round(orderedSummary[0].p10)}–{Math.round(orderedSummary[0].p90)} days).
+              {benchmark && benchmark.p50 > 0 && (
+                <> That&rsquo;s{' '}
+                  <strong>{durationComparison(orderedSummary[0].p50, benchmark.p50)}</strong>.
+                </>
+              )}
             </>
           ) : headlineFinding ? (
             <>
@@ -196,7 +232,9 @@ export function LifecyclePanel({ agencyCode }: LifecyclePanelProps = {}) {
                 <DistributionChart
                   summary={orderedSummary}
                   sampleByAgency={sampleByAgency}
-                  width={Math.max(360, width)}
+                  width={Math.max(360, width - 24)}
+                  benchmarkP50={benchmark?.p50}
+                  bordered
                 />
               )}
             </ParentSize>
@@ -241,24 +279,32 @@ export function LifecyclePanel({ agencyCode }: LifecyclePanelProps = {}) {
   );
 }
 
-function DistributionChart({
+const DistributionChart = memo(function DistributionChart({
   summary,
   sampleByAgency,
   width = DIST_W,
+  benchmarkP50,
+  bordered = false,
 }: {
   summary: Summary[];
   sampleByAgency: Map<string, Sample[]>;
   /** Total SVG width. Defaults to the fixed lab width; the single-agency
    *  profile passes its measured container width so the strip fits the column. */
   width?: number;
+  /** All-agency median (days). When set, drawn as an amber reference line so
+   *  the agency's distribution can be read against the government-wide norm. */
+  benchmarkP50?: number;
+  /** Wrap the chart in the same bordered surface box used by the agency
+   *  activity panel, so both charts on the agency profile match. */
+  bordered?: boolean;
 }) {
   const height = MARGIN.top + MARGIN.bottom + summary.length * ROW_H;
   const innerW = width - MARGIN.left - MARGIN.right;
   const innerH = height - MARGIN.top - MARGIN.bottom;
 
   const xMax = useMemo(
-    () => Math.max(365, ...summary.map(s => s.p90)),
-    [summary]
+    () => Math.max(365, benchmarkP50 ?? 0, ...summary.map(s => s.p90)),
+    [summary, benchmarkP50]
   );
 
   const xScale = useMemo(
@@ -274,6 +320,7 @@ function DistributionChart({
 
   return (
     <div className="overflow-x-auto">
+      <div className={bordered ? 'card-static p-3' : undefined}>
       <svg width={width} height={height} role="img" aria-label="Rulemaking duration distribution by agency">
         <Group left={MARGIN.left} top={MARGIN.top}>
           {/* Reference: 1 year */}
@@ -285,6 +332,28 @@ function DistributionChart({
               stroke="var(--border-subtle)" strokeDasharray="2 4"
             />
           ))}
+
+          {/* All-agency median — the "vs. average" benchmark */}
+          {benchmarkP50 != null && benchmarkP50 > 0 && (
+            <>
+              <Line
+                from={{ x: xScale(benchmarkP50), y: 0 }}
+                to={{ x: xScale(benchmarkP50), y: innerH }}
+                stroke="var(--accent-amber)"
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+              />
+              <text
+                x={xScale(benchmarkP50)}
+                y={-7}
+                fontSize={9}
+                fill="var(--accent-amber)"
+                textAnchor="middle"
+              >
+                all-agency median
+              </text>
+            </>
+          )}
 
           {summary.map(s => {
             const y = (yScale(s.agency_code) ?? 0) + rowH / 2;
@@ -373,21 +442,25 @@ function DistributionChart({
           />
         </Group>
       </svg>
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--muted)] pl-[60px]">
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--muted)]">
         <span>Light box = middle 50% (p25–p75) · thin line = p10–p90 · vertical mark = median</span>
         <span>Dots = sampled individual rulemakings (hover for title)</span>
         <span>Dashed verticals = 1, 2, 3, 4 years</span>
+        {benchmarkP50 != null && benchmarkP50 > 0 && (
+          <span className="text-[var(--accent-amber)]">Amber line = all-agency median</span>
+        )}
       </div>
     </div>
   );
-}
+});
 
 function StuckCard({ stuck }: { stuck: Stuck }) {
   const years = stuck.days_open / 365;
   const yearLabel = years >= 2 ? `${years.toFixed(1)} years` : `${Math.round(stuck.days_open / 30)} months`;
   const info = getAgencyInfo(stuck.agency_code);
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+    <Card interactive={false} className="p-3">
       <div className="flex items-baseline justify-between gap-2 mb-1">
         <Link
           href={`/sr/${stuck.agency_code}/${stuck.docket_id}`}
@@ -406,6 +479,6 @@ function StuckCard({ stuck }: { stuck: Stuck }) {
       <div className="text-[10px] text-[var(--muted)]">
         {info.name} · proposed {stuck.proposed_date}
       </div>
-    </div>
+    </Card>
   );
 }

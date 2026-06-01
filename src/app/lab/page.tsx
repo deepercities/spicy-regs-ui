@@ -1,6 +1,6 @@
 'use client';
 
-import { Header } from '@/components/Header';
+import { PageShell } from '@/components/ui/PageShell';
 import { FlaskConical, Info } from 'lucide-react';
 import { AgencyActivityPanel } from '@/components/lab/AgencyActivityPanel';
 import { CommentOrchestrationPanel } from '@/components/lab/CommentOrchestrationPanel';
@@ -10,30 +10,27 @@ import { DemoPill } from '@/components/ui/DemoPill';
 
 export default function LabPage() {
   return (
-    <div className="min-h-screen bg-[var(--background)]">
-      <Header maxWidthClass="max-w-6xl" />
-      <main className="max-w-6xl mx-auto px-4 py-8">
-        <div className="mb-8">
-          <div className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-[var(--accent-amber)] mb-3 font-semibold">
-            <FlaskConical size={13} />
-            Experimental
-          </div>
-          <h1 className="text-4xl font-bold mb-2 font-serif">
-            <span className="gradient-text">Lab</span>
-          </h1>
-          <div className="text-[var(--muted)] max-w-3xl">
-            Three editorial chart prototypes built on top of the same{' '}
-            <span className="font-mono-id">regulations.gov</span> data feed.{' '}
-            <SimulatedTooltip />
-          </div>
+    <PageShell maxWidth="4xl">
+      <div className="mb-8">
+        <div className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-[var(--accent-amber)] mb-3 font-semibold">
+          <FlaskConical size={13} />
+          Experimental
         </div>
+        <h1 className="text-4xl font-bold mb-2 font-serif">
+          <span className="gradient-text">Lab</span>
+        </h1>
+        <div className="text-[var(--muted)] max-w-3xl">
+          Three editorial chart prototypes built on top of the same{' '}
+          <span className="font-mono-id">regulations.gov</span> data feed.{' '}
+          <SimulatedTooltip />
+        </div>
+      </div>
 
-        <AgencyActivityPanel />
-        <CommentOrchestrationPanel />
-        <CommentFidelityPanel />
-        <LifecyclePanel />
-      </main>
-    </div>
+      <AgencyActivityPanel />
+      <CommentOrchestrationPanel />
+      <CommentFidelityPanel />
+      <LifecyclePanel />
+    </PageShell>
   );
 }
 
@@ -52,12 +49,8 @@ function SimulatedTooltip() {
       <span
         id="simulated-tooltip"
         role="tooltip"
-        className="tooltip invisible group-hover:visible absolute z-50 left-0 top-full mt-2 w-[min(28rem,90vw)] p-3.5 rounded-xl text-xs leading-relaxed text-left shadow-lg block"
-        style={{
-          background: 'var(--surface)',
-          border: '1px solid var(--border)',
-          color: 'var(--foreground)',
-        }}
+        className="tooltip popover-surface invisible group-hover:visible absolute z-50 left-0 top-full mt-2 w-[min(28rem,90vw)] p-3.5 text-xs leading-relaxed text-left block"
+        style={{ color: 'var(--foreground)' }}
       >
         <span className="block font-semibold mb-1.5 text-[var(--foreground)]">
           What&apos;s real and what&apos;s simulated

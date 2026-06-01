@@ -4,7 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useDuckDBService } from '@/lib/duckdb/useDuckDBService';
 import { PanelHeader, DocketIdentity } from '@/components/ui/PanelHeader';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { CommentBreakdown, type Cluster } from '@/components/docket/CommentBreakdown';
+import { cn } from '@/lib/utils/cn';
 
 // Re-exported for the fidelity panel, which shares these primitives.
 export { MetricCard, ClusterCard } from '@/components/docket/CommentBreakdown';
@@ -153,39 +155,28 @@ function DocketTabs({
   dockets: DocketTab[];
 }) {
   return (
-    <div
-      role="tablist"
-      aria-label="Example dockets"
-      className="inline-flex flex-wrap rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1 gap-1"
-    >
-      {dockets.map(({ id, label }) => {
-        const isActive = id === active;
-        const data = results[id];
-        return (
-          <button
-            key={id}
-            role="tab"
-            type="button"
-            aria-selected={isActive}
-            onClick={() => onChange(id)}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-baseline gap-2 ${
-              isActive
-                ? 'bg-[var(--accent-primary)] text-white'
-                : 'text-[var(--muted)] hover:text-[var(--foreground)]'
-            }`}
-          >
+    <SegmentedControl
+      ariaLabel="Example dockets"
+      wrap
+      value={active}
+      onValueChange={onChange}
+      options={dockets.map(({ id, label }) => ({
+        value: id,
+        label: (isActive: boolean) => (
+          <>
             <span>{label}</span>
             <span
-              className={`font-mono-id text-[10px] ${
-                isActive ? 'text-white/80' : 'text-[var(--muted-foreground)]'
-              }`}
+              className={cn(
+                'font-mono-id text-[10px]',
+                isActive ? 'text-white/80' : 'text-[var(--muted-foreground)]',
+              )}
             >
-              {data ? id : '…'}
+              {results[id] ? id : '…'}
             </span>
-          </button>
-        );
-      })}
-    </div>
+          </>
+        ),
+      }))}
+    />
   );
 }
 

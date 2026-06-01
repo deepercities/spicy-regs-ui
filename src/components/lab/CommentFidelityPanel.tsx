@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useDuckDBService } from '@/lib/duckdb/useDuckDBService';
 import { PanelHeader, FindingNote, DocketIdentity } from '@/components/ui/PanelHeader';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { MetricCard, ClusterCard, type Cluster } from './CommentOrchestrationPanel';
 import { isPlaceholder } from '@/lib/text/normalize';
 import { computeOrchestration } from '@/lib/comments/orchestration';
@@ -212,48 +213,25 @@ function FidelityBody({ data, exact, tier }: { data: TierData; exact?: TierData;
 
 function DocketToggle({ active, onChange }: { active: string; onChange: (id: string) => void }) {
   return (
-    <div role="tablist" aria-label="Example dockets" className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1 gap-1">
-      {DOCKETS.map(({ id, label }) => {
-        const isActive = id === active;
-        return (
-          <button
-            key={id}
-            role="tab"
-            type="button"
-            aria-selected={isActive}
-            onClick={() => onChange(id)}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              isActive ? 'bg-[var(--accent-primary)] text-white' : 'text-[var(--muted)] hover:text-[var(--foreground)]'
-            }`}
-          >
-            {label}
-          </button>
-        );
-      })}
-    </div>
+    <SegmentedControl
+      ariaLabel="Example dockets"
+      value={active}
+      onValueChange={onChange}
+      options={DOCKETS.map(({ id, label }) => ({ value: id, label }))}
+    />
   );
 }
 
 function TierToggle({ active, onChange }: { active: Tier; onChange: (t: Tier) => void }) {
   return (
-    <div role="group" aria-label="Match strictness" className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1 gap-1">
-      {TIERS.map(({ id, label }) => {
-        const isActive = id === active;
-        return (
-          <button
-            key={id}
-            type="button"
-            aria-pressed={isActive}
-            onClick={() => onChange(id)}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              isActive ? 'bg-[var(--foreground)] text-[var(--background)]' : 'text-[var(--muted)] hover:text-[var(--foreground)]'
-            }`}
-          >
-            {label}
-          </button>
-        );
-      })}
-    </div>
+    <SegmentedControl
+      ariaLabel="Match strictness"
+      variant="group"
+      tone="inverse"
+      value={active}
+      onValueChange={onChange}
+      options={TIERS.map(({ id, label }) => ({ value: id, label }))}
+    />
   );
 }
 

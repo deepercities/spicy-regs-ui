@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { Group } from '@visx/group';
 import { Bar } from '@visx/shape';
 import { scaleTime, scaleLinear } from '@visx/scale';
@@ -10,6 +10,7 @@ import { useDuckDBService } from '@/lib/duckdb/useDuckDBService';
 import { useDuckDB } from '@/lib/duckdb/context';
 import { getAgencyInfo } from '@/lib/agencyMetadata';
 import { PanelHeader } from '@/components/ui/PanelHeader';
+import { Card } from '@/components/ui/Card';
 import { AdminBands } from './AdminBands';
 
 interface MonthRow {
@@ -19,7 +20,15 @@ interface MonthRow {
   n: number;
 }
 
-const DOMAIN_START = new Date('2014-01-01');
+/** Earliest month the chart ever shows: capped at exactly 10 years before
+ *  today, month-aligned. The era backdrop and bars never reach further back
+ *  than a decade, so older administrations drop off the left edge over time. */
+function tenYearsAgoMonthStart(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear() - 10, now.getUTCMonth(), 1));
+}
+const DOMAIN_START = tenYearsAgoMonthStart();
+const DOMAIN_START_ISO = `${DOMAIN_START.getUTCFullYear()}-${String(DOMAIN_START.getUTCMonth() + 1).padStart(2, '0')}-01`;
 const FALLBACK_END = new Date('2026-12-31');
 
 const MULTIPLE_H = 160;
@@ -97,7 +106,7 @@ export function AgencyActivityPanel({ agencyCode }: AgencyActivityPanelProps = {
     // Single-agency (profile) path: no ranking pass, just this agency's months.
     if (agencyCode) {
       setPoolAgencies([agencyCode]);
-      getDocumentCountsByAgencyMonth(['Rule'], '2014-01-01', [agencyCode])
+      getDocumentCountsByAgencyMonth(['Rule'], DOMAIN_START_ISO, [agencyCode])
         .then(data => { if (!cancelled) { setRows(data); setLoading(false); } })
         .catch(err => {
           if (cancelled) return;
@@ -112,7 +121,7 @@ export function AgencyActivityPanel({ agencyCode }: AgencyActivityPanelProps = {
       SELECT agency_code, COUNT(*) AS n
       FROM read_parquet('${R2}/documents.parquet')
       WHERE document_type = 'Rule'
-        AND TRY_CAST(posted_date AS DATE) >= DATE '2014-01-01'
+        AND TRY_CAST(posted_date AS DATE) >= DATE '${DOMAIN_START_ISO}'
         AND agency_code IS NOT NULL
       GROUP BY 1 ORDER BY n DESC LIMIT ${FINDING_POOL_N}
     `)
@@ -120,7 +129,7 @@ export function AgencyActivityPanel({ agencyCode }: AgencyActivityPanelProps = {
         if (cancelled) return [];
         const codes = top.map(t => t.agency_code);
         setPoolAgencies(codes);
-        return getDocumentCountsByAgencyMonth(['Rule'], '2014-01-01', codes);
+        return getDocumentCountsByAgencyMonth(['Rule'], DOMAIN_START_ISO, codes);
       })
       .then(data => {
         if (cancelled) return;
@@ -197,10 +206,8 @@ export function AgencyActivityPanel({ agencyCode }: AgencyActivityPanelProps = {
   const caption = single ? (
     <>
       <span className="font-medium">Final Rule</span> documents per month at{' '}
-      <span className="font-mono-id">{agencyCode}</span>, with administration eras shaded. Over a
-      multi-year window the era split becomes a useful comparison: an outgoing administration&rsquo;s
-      end-of-term &ldquo;midnight regulations&rdquo; surge shows up as a late spike. Blue marks
-      Democratic administrations, red Republican; dashed lines mark each January 20 handoff.
+      <span className="font-mono-id">{agencyCode}</span>. Blue marks Democratic administrations, red
+      Republican; dashed lines mark each January 20 handoff.
     </>
   ) : (
     <>
@@ -208,8 +215,8 @@ export function AgencyActivityPanel({ agencyCode }: AgencyActivityPanelProps = {
       weeks. It&rsquo;s known as the &ldquo;midnight regulations&rdquo; surge. Each panel below
       tracks <span className="font-medium">Final Rule</span> documents per month at six agencies
       whose late-Biden output ran furthest above their prior-year baseline, drawn from the 20
-      highest-volume agencies since 2014. Blue marks the Biden years, red the two Trump terms.
-      Dashed lines mark each January 20 handoff.
+      highest-volume agencies of the past decade. Blue marks Democratic administrations, red
+      Republican; dashed lines mark each January 20 handoff.
     </>
   );
 
@@ -258,9 +265,9 @@ export function AgencyActivityPanel({ agencyCode }: AgencyActivityPanelProps = {
         )
       )}
 
-      <div className="mt-4 flex items-center gap-3 text-xs text-[var(--muted)] flex-wrap">
-        <LegendSwatch color="rgba(220, 38, 38, 0.12)" label="Republican administration" />
-        <LegendSwatch color="rgba(37, 99, 235, 0.12)" label="Democratic administration" />
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--muted)]">
+        <LegendSwatch color="rgb(var(--party-gop) / 0.12)" label="Republican administration" />
+        <LegendSwatch color="rgb(var(--party-dem) / 0.12)" label="Democratic administration" />
         <span>Bar height = Final Rules posted that month. Shared Y-axis across panels.</span>
       </div>
     </section>
@@ -286,12 +293,12 @@ interface SmallMultipleProps {
   height?: number;
 }
 
-function SmallMultiple({ agencyCode, rows, yMax, domainEnd, height = MULTIPLE_H }: SmallMultipleProps) {
+const SmallMultiple = memo(function SmallMultiple({ agencyCode, rows, yMax, domainEnd, height = MULTIPLE_H }: SmallMultipleProps) {
   const info = getAgencyInfo(agencyCode);
   const finding = useMemo(() => computeFinding(rows), [rows]);
 
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+    <Card interactive={false} className="p-3">
       <div className="flex items-start justify-between mb-1">
         <div>
           <div className="font-mono-id" style={{ color: 'var(--accent-primary)' }}>{agencyCode}</div>
@@ -333,9 +340,9 @@ function SmallMultiple({ agencyCode, rows, yMax, domainEnd, height = MULTIPLE_H 
           );
         }}
       </ParentSize>
-    </div>
+    </Card>
   );
-}
+});
 
 interface SmallMultipleChartProps extends SmallMultipleProps {
   width: number;
@@ -344,15 +351,6 @@ interface SmallMultipleChartProps extends SmallMultipleProps {
 function SmallMultipleChart({ agencyCode, rows, yMax, domainEnd, width, height = MULTIPLE_H }: SmallMultipleChartProps) {
   const innerW = width - MARGIN.left - MARGIN.right;
   const innerH = height - MARGIN.top - MARGIN.bottom;
-
-  /** This agency's last data month + 1 → use as the right edge for the admin
-   *  band so the colored rectangle stops where the bars do (rather than running
-   *  out into trailing whitespace when this agency hasn't posted recently). */
-  const agencyBandEnd = useMemo(() => {
-    if (rows.length === 0) return domainEnd;
-    const last = new Date(rows[rows.length - 1].month + 'T00:00:00Z');
-    return new Date(Date.UTC(last.getUTCFullYear(), last.getUTCMonth() + 1, 1));
-  }, [rows, domainEnd]);
 
   const xScale = useMemo(
     () => scaleTime({ domain: [DOMAIN_START, domainEnd], range: [0, innerW] }),
@@ -378,7 +376,7 @@ function SmallMultipleChart({ agencyCode, rows, yMax, domainEnd, width, height =
   return (
     <svg width={width} height={height} role="img" aria-label={`${agencyCode} final rules per month`}>
       <Group left={MARGIN.left} top={MARGIN.top}>
-        <AdminBands xScale={xScale} height={innerH} clampMax={agencyBandEnd} />
+        <AdminBands xScale={xScale} height={innerH} />
         {rows.map(r => {
           const d = new Date(r.month + 'T00:00:00Z');
           const x = xScale(d);

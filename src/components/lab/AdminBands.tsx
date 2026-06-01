@@ -5,20 +5,16 @@ import { ADMIN_ERAS, partyColor } from './adminTransitions';
 interface AdminBandsProps {
   xScale: ScaleTime<number, number>;
   height: number;
-  /** Optional per-chart right-edge clamp. The band rect won't extend past this
-   *  date even if the scale's domain ends later. Use this so the band stops at
-   *  the last data point in a small multiple, not in unused trailing whitespace. */
-  clampMax?: Date;
 }
 
 /**
  * Renders translucent rectangles across the chart background for each
  * presidential era, plus dashed vertical lines at the transition dates.
  */
-export function AdminBands({ xScale, height, clampMax }: AdminBandsProps) {
+export function AdminBands({ xScale, height }: AdminBandsProps) {
   const domain = xScale.domain();
   const dMin = domain[0];
-  const dMax = clampMax && clampMax < domain[1] ? clampMax : domain[1];
+  const dMax = domain[1];
 
   return (
     <Group>
@@ -35,7 +31,7 @@ export function AdminBands({ xScale, height, clampMax }: AdminBandsProps) {
             y={0}
             width={w}
             height={height}
-            fill={partyColor(era.party)}
+            style={{ fill: partyColor(era.party) }}
             pointerEvents="none"
           />
         );
