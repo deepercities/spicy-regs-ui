@@ -1,11 +1,13 @@
 import * as React from 'react';
 import { Header } from '@/components/Header';
+import { Footer } from '@/components/Footer';
 
 /**
- * Standard page chrome: sticky Header, full-height tinted background, and
- * a centered max-width content column. Keeps the chrome consistent across
- * routes and gives one place to evolve it (e.g. adding a footer, a global
- * banner, or a dark-mode toggle).
+ * Standard page chrome: sticky Header, full-height tinted background, a centered
+ * max-width content column, and a short global Footer pinned to the bottom.
+ * Keeps the chrome consistent across routes and gives one place to evolve it.
+ * The Header/Footer use a fixed inner width (see `APP_FRAME`) so they never
+ * reflow as the content `maxWidth` changes between routes.
  */
 export type PageShellMaxWidth = '2xl' | '3xl' | '4xl' | '5xl' | '6xl' | '7xl';
 
@@ -13,7 +15,7 @@ export interface PageShellProps {
   children: React.ReactNode;
   /** Width of the content column. Defaults to `6xl` (the most common route). */
   maxWidth?: PageShellMaxWidth;
-  /** Override the standard `py-6 px-4` padding on <main> entirely. */
+  /** Replace the standard `max-w-* mx-auto px-4 py-6` on <main> (flex-1 is kept). */
   mainClassName?: string;
   /** Extra classes on the outer wrapper. */
   className?: string;
@@ -34,11 +36,19 @@ export function PageShell({
   mainClassName,
   className = '',
 }: PageShellProps) {
-  const mainCls = mainClassName ?? `${MAX_W_CLASS[maxWidth]} mx-auto px-4 py-6`;
+  // `flex-1` lets <main> grow so the footer is pushed to the bottom on short
+  // pages (loaders, not-found). `w-full` is essential: <main> is a flex item
+  // with `mx-auto`, and auto cross-axis margins disable the default `stretch`,
+  // so without an explicit width <main> shrinks to fit its content — making the
+  // column (and everything centered in it) jump narrower whenever a route's
+  // content is narrow (e.g. an empty filter result). Callers' mainClassName
+  // overrides still apply, and should include `w-full` themselves if centered.
+  const mainCls = `flex-1 ${mainClassName ?? `w-full ${MAX_W_CLASS[maxWidth]} mx-auto px-4 py-6`}`;
   return (
-    <div className={`min-h-screen bg-[var(--background)] ${className}`}>
-      <Header maxWidthClass={MAX_W_CLASS[maxWidth]} />
+    <div className={`min-h-screen flex flex-col bg-[var(--background)] ${className}`}>
+      <Header />
       <main className={mainCls}>{children}</main>
+      <Footer />
     </div>
   );
 }

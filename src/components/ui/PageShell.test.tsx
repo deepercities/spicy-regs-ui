@@ -30,9 +30,11 @@ describe('PageShell', () => {
     expect(screen.getByRole('main').className).toContain('max-w-5xl');
   });
 
-  it('replaces standard padding when mainClassName is set', () => {
+  it('replaces standard padding when mainClassName is set (keeping flex-1)', () => {
     render(<PageShell mainClassName="custom-main"><div /></PageShell>);
     const main = screen.getByRole('main');
-    expect(main.className).toBe('custom-main');
+    // flex-1 is always applied so the footer is pushed to the bottom; the
+    // caller's mainClassName replaces only the width/padding defaults.
+    expect(main.className).toBe('flex-1 custom-main');
   });
 });
