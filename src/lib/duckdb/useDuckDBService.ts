@@ -176,8 +176,15 @@ function sqlCommentWindowOpen(open: boolean): string {
 /**
  * Hook that provides data fetching via DuckDB-WASM + Parquet on R2.
  */
+/**
+ * Cache preset for whole-dataset rollups that are identical for every viewer
+ * and only change when the ETL refreshes (roughly daily). Served from
+ * IndexedDB across reloads; the 6h TTL bounds staleness.
+ */
+const ROLLUP_CACHE = { ttlMs: 6 * 60 * 60 * 1000, persist: true } as const;
+
 export function useDuckDBService() {
-  const { runQuery, isReady } = useDuckDB();
+  const { runQuery, runCachedQuery, isReady } = useDuckDB();
 
   /** Cache agency list to avoid re-fetching dockets.parquet just for DISTINCT agency_code */
   const agencyCache = useRef<string[] | null>(null);
@@ -515,13 +522,13 @@ export function useDuckDBService() {
       const upper = agencyCode.toUpperCase();
 
       const [docketResult, docResult, commentResult] = await Promise.all([
-        runQuery<{ count: number }>(`
+        runCachedQuery<{ count: number }>(`
           SELECT COUNT(*) as count
           FROM ${parquetRef("dockets" as RegulationsDataTypes)}
           WHERE agency_code = '${upper}'
-        `),
-        runQuery<{ count: number }>(`SELECT COUNT(*) as count FROM ${parquetRef("documents" as RegulationsDataTypes)} WHERE agency_code = '${upper}'`),
-        runQuery<{ count: number }>(`SELECT COALESCE(CAST(SUM(row_count) AS BIGINT), 0) as count FROM ${commentsIndexRef()} WHERE agency_code = '${upper}'`),
+        `, ROLLUP_CACHE),
+        runCachedQuery<{ count: number }>(`SELECT COUNT(*) as count FROM ${parquetRef("documents" as RegulationsDataTypes)} WHERE agency_code = '${upper}'`, ROLLUP_CACHE),
+        runCachedQuery<{ count: number }>(`SELECT COALESCE(CAST(SUM(row_count) AS BIGINT), 0) as count FROM ${commentsIndexRef()} WHERE agency_code = '${upper}'`, ROLLUP_CACHE),
       ]);
 
       return {
@@ -530,7 +537,7 @@ export function useDuckDBService() {
         commentCount: Number(commentResult[0]?.count ?? 0),
       };
     },
-    [runQuery, isReady]
+    [runCachedQuery, isReady]
   );
 
   /**
@@ -557,16 +564,16 @@ export function useDuckDBService() {
       if (!isReady) throw new Error("DuckDB not ready");
 
       const [docketRows, commentRows] = await Promise.all([
-        runQuery<{ agency_code: string; docket_cnt: number }>(`
+        runCachedQuery<{ agency_code: string; docket_cnt: number }>(`
           SELECT agency_code, COUNT(*) as docket_cnt
           FROM ${parquetRef("dockets" as RegulationsDataTypes)}
           GROUP BY agency_code
-        `),
-        runQuery<{ agency_code: string; comment_cnt: number }>(`
+        `, ROLLUP_CACHE),
+        runCachedQuery<{ agency_code: string; comment_cnt: number }>(`
           SELECT agency_code, CAST(SUM(row_count) AS BIGINT) as comment_cnt
           FROM ${commentsIndexRef()}
           GROUP BY agency_code
-        `),
+        `, ROLLUP_CACHE),
       ]);
 
       const result: Record<string, { dockets: number; comments: number }> = {};
@@ -583,7 +590,7 @@ export function useDuckDBService() {
       }
       return result;
     },
-    [runQuery, isReady]
+    [runCachedQuery, isReady]
   );
 
   /**
@@ -718,10 +725,13 @@ export function useDuckDBService() {
         ORDER BY publication_date DESC NULLS LAST
         LIMIT ${limit} OFFSET ${offset}
       `;
-      const rows = await runQuery<Record<string, unknown>>(sql);
+      // In-memory cache (no persist): each search full-scans the ~793K-row FR
+      // parquet, so caching keeps re-renders and repeated/back-and-forth
+      // searches from re-scanning. Bounded by a short TTL.
+      const rows = await runCachedQuery<Record<string, unknown>>(sql, { ttlMs: 10 * 60_000 });
       return rows.map(normalizeFRRow);
     },
-    [runQuery, isReady]
+    [runCachedQuery, isReady]
   );
 
   /* ───────────────────── /lab (experimental) queries ───────────────────── */
@@ -759,10 +769,10 @@ export function useDuckDBService() {
         GROUP BY 1, 2, 3
         ORDER BY 1, 2, 3
       `;
-      const rows = await runQuery<{ agency_code: string; document_type: string; month: string; n: number }>(query);
+      const rows = await runCachedQuery<{ agency_code: string; document_type: string; month: string; n: number }>(query, ROLLUP_CACHE);
       return rows.map(r => ({ ...r, n: Number(r.n) }));
     },
-    [runQuery, isReady]
+    [runCachedQuery, isReady]
   );
 
   /**
@@ -786,7 +796,7 @@ export function useDuckDBService() {
       commentEndDate: string | null;
       totals: { total: number; unique: number; empty: number };
       volumeByDay: { day: string; n: number }[];
-      clusters: { hash: string; n: number; sample: string; firstDay: string; lastDay: string }[];
+      clusters: { hash: string; n: number; sample: string; firstDay: string; lastDay: string; tokenset: string }[];
     }> => {
       if (!isReady) throw new Error('DuckDB not ready');
 
@@ -871,11 +881,12 @@ export function useDuckDBService() {
           GROUP BY 1
           ORDER BY 1
         `),
-        runQuery<{ hash: string; n: number; sample: string; firstDay: string; lastDay: string }>(`
+        runQuery<{ hash: string; n: number; sample: string; firstDay: string; lastDay: string; tokenset: string }>(`
           ${keyedCTE}
           SELECT k AS hash,
                  COUNT(*) AS n,
-                 LEFT(ANY_VALUE(display), 240) AS sample,
+                 LEFT(ANY_VALUE(display), 600) AS sample,
+                 ANY_VALUE(${sqlTokenSetKey(skeleton)}) AS tokenset,
                  strftime(MIN(TRY_CAST(posted_date AS DATE)), '%Y-%m-%d') AS firstDay,
                  strftime(MAX(TRY_CAST(posted_date AS DATE)), '%Y-%m-%d') AS lastDay
           FROM keyed
@@ -907,7 +918,12 @@ export function useDuckDBService() {
           empty: Number(totals[0]?.empty ?? 0),
         },
         volumeByDay: volumeByDay.map(r => ({ day: r.day, n: Number(r.n) })),
-        clusters: clusters.map(r => ({ ...r, n: Number(r.n), sample: stripQuotes(r.sample) })),
+        clusters: clusters.map(r => ({
+          ...r,
+          n: Number(r.n),
+          sample: stripQuotes(r.sample),
+          tokenset: stripQuotes(r.tokenset),
+        })),
       };
     },
     [runQuery, isReady, buildCommentsSource]
@@ -1092,7 +1108,7 @@ export function useDuckDBService() {
         )
       `;
 
-      const summary = await runQuery<{
+      const summary = await runCachedQuery<{
         agency_code: string; n: number;
         p10: number; p25: number; p50: number; p75: number; p90: number;
         min: number; max: number;
@@ -1110,9 +1126,9 @@ export function useDuckDBService() {
         FROM pairs
         GROUP BY agency_code
         ORDER BY n DESC
-      `);
+      `, ROLLUP_CACHE);
 
-      const completedSample = await runQuery<{
+      const completedSample = await runCachedQuery<{
         docket_id: string; agency_code: string; title: string;
         proposed_date: string; final_date: string; days: number;
       }>(`
@@ -1132,7 +1148,7 @@ export function useDuckDBService() {
         WHERE r_low <= ${samplePerAgency / 3}
            OR r_high <= ${samplePerAgency / 3}
            OR bucket < ${samplePerAgency / 3}
-      `);
+      `, ROLLUP_CACHE);
 
       // "Stuck" window: proposed at least 18 months ago (long enough that a
       // normal NPRM should have finalized) but not older than 8 years
@@ -1143,7 +1159,7 @@ export function useDuckDBService() {
       // displayed sample spreads across years instead of clustering on the
       // exact boundary date.
       const stuckPerTier = Math.max(2, Math.floor(limitStuck / 3));
-      const stuck = await runQuery<{
+      const stuck = await runCachedQuery<{
         docket_id: string; agency_code: string; title: string; proposed_date: string; days_open: number;
       }>(`
         WITH props AS (
@@ -1185,7 +1201,7 @@ export function useDuckDBService() {
         FROM ranked
         WHERE rn <= ${stuckPerTier}
         ORDER BY days_open DESC
-      `);
+      `, ROLLUP_CACHE);
 
       return {
         summary: summary.map(r => ({
@@ -1202,7 +1218,70 @@ export function useDuckDBService() {
         })),
       };
     },
-    [runQuery, isReady]
+    [runCachedQuery, isReady]
+  );
+
+  /**
+   * Government-wide rulemaking-duration benchmark — the same Proposed→Final
+   * pairing as {@link getRulemakingLifecycles}, but pooled across ALL agencies
+   * with no agency filter. Returns the overall distribution (and the count of
+   * agencies that contributed pairs) so a single agency's median can be framed
+   * against "the typical federal rule." Computed once, cheap to memoize.
+   */
+  const getRulemakingLifecycleBenchmark = useCallback(
+    async (): Promise<{
+      n: number; agencyCount: number;
+      p10: number; p25: number; p50: number; p75: number; p90: number;
+    }> => {
+      if (!isReady) throw new Error('DuckDB not ready');
+
+      const rows = await runCachedQuery<{
+        n: number; agency_count: number;
+        p10: number; p25: number; p50: number; p75: number; p90: number;
+      }>(`
+        WITH props AS (
+          SELECT docket_id, agency_code,
+                 MIN(TRY_CAST(posted_date AS DATE)) AS proposed_date
+          FROM ${parquetRef('documents' as RegulationsDataTypes)}
+          WHERE document_type = 'Proposed Rule' AND agency_code IS NOT NULL
+          GROUP BY 1, 2
+        ),
+        finals AS (
+          SELECT docket_id, MIN(TRY_CAST(posted_date AS DATE)) AS final_date
+          FROM ${parquetRef('documents' as RegulationsDataTypes)}
+          WHERE document_type = 'Rule'
+          GROUP BY 1
+        ),
+        pairs AS (
+          SELECT p.agency_code,
+                 date_diff('day', p.proposed_date, f.final_date) AS days
+          FROM props p
+          JOIN finals f USING (docket_id)
+          WHERE p.proposed_date IS NOT NULL
+            AND f.final_date IS NOT NULL
+            AND f.final_date >= p.proposed_date
+            AND p.proposed_date >= DATE '2010-01-01'
+        )
+        SELECT COUNT(*) AS n,
+               COUNT(DISTINCT agency_code) AS agency_count,
+               quantile_cont(days, 0.10) AS p10,
+               quantile_cont(days, 0.25) AS p25,
+               quantile_cont(days, 0.50) AS p50,
+               quantile_cont(days, 0.75) AS p75,
+               quantile_cont(days, 0.90) AS p90
+        FROM pairs
+      `, ROLLUP_CACHE);
+
+      const r = rows[0];
+      return {
+        n: Number(r?.n ?? 0),
+        agencyCount: Number(r?.agency_count ?? 0),
+        p10: Number(r?.p10 ?? 0), p25: Number(r?.p25 ?? 0),
+        p50: Number(r?.p50 ?? 0), p75: Number(r?.p75 ?? 0),
+        p90: Number(r?.p90 ?? 0),
+      };
+    },
+    [runCachedQuery, isReady]
   );
 
   /* ──────────── Discovery rail + agency / docket / document queries ──────────── */
@@ -1230,7 +1309,7 @@ export function useDuckDBService() {
       if (!isReady) throw new Error('DuckDB not ready');
 
       const [surgeRows, closingRows, spikeRows, discussedRows] = await Promise.all([
-        runQuery<{ docket_id: string; agency_code: string; title: string; recent_n: number; prev_n: number; delta: number }>(`
+        runCachedQuery<{ docket_id: string; agency_code: string; title: string; recent_n: number; prev_n: number; delta: number }>(`
           WITH mx AS (SELECT MAX(year*12+(month-1)) AS m FROM ${commentsIndexRef()}),
           agg AS (
             SELECT docket_id, agency_code,
@@ -1248,16 +1327,16 @@ export function useDuckDBService() {
           WHERE a.recent_n > 0
           ORDER BY delta DESC
           LIMIT ${perKind}
-        `),
-        runQuery<{ docket_id: string; agency_code: string; title: string; comment_end_date: string; comment_count: number }>(`
+        `, ROLLUP_CACHE),
+        runCachedQuery<{ docket_id: string; agency_code: string; title: string; comment_end_date: string; comment_count: number }>(`
           SELECT docket_id, agency_code, title, comment_end_date, comment_count
           FROM ${feedSummaryRef()}
           WHERE TRY_CAST(comment_end_date AS TIMESTAMP)
                 BETWEEN CAST(NOW() AS TIMESTAMP) AND CAST(NOW() AS TIMESTAMP) + INTERVAL '3' DAY
           ORDER BY comment_end_date ASC
           LIMIT ${perKind}
-        `),
-        runQuery<{ agency_code: string; recent_30d: number; baseline: number; ratio: number }>(`
+        `, ROLLUP_CACHE),
+        runCachedQuery<{ agency_code: string; recent_30d: number; baseline: number; ratio: number }>(`
           WITH per AS (
             SELECT agency_code,
               COUNT(*) FILTER (WHERE TRY_CAST(posted_date AS TIMESTAMP) >= CAST(NOW() AS TIMESTAMP) - INTERVAL '30' DAY) AS recent_30d,
@@ -1275,13 +1354,13 @@ export function useDuckDBService() {
             AND (recent_30d / NULLIF(prior_yr / 12.0, 0)) >= 2.0
           ORDER BY ratio DESC
           LIMIT ${perKind}
-        `),
-        runQuery<{ docket_id: string; agency_code: string; title: string; comment_count: number }>(`
+        `, ROLLUP_CACHE),
+        runCachedQuery<{ docket_id: string; agency_code: string; title: string; comment_count: number }>(`
           SELECT docket_id, agency_code, title, comment_count
           FROM ${feedSummaryRef()}
           ORDER BY comment_count DESC
           LIMIT ${perKind}
-        `),
+        `, ROLLUP_CACHE),
       ]);
 
       return {
@@ -1305,7 +1384,7 @@ export function useDuckDBService() {
         })),
       };
     },
-    [runQuery, isReady]
+    [runCachedQuery, isReady]
   );
 
   /** Daily comment volume for one docket — drives the Comments-tab area chart. */
@@ -1359,16 +1438,16 @@ export function useDuckDBService() {
     async (agencyCode: string, limit = 20): Promise<any[]> => {
       if (!isReady) throw new Error('DuckDB not ready');
       const upper = agencyCode.toUpperCase();
-      return runQuery<any>(`
+      return runCachedQuery<any>(`
         SELECT docket_id, agency_code, title, abstract, comment_count, comment_end_date, docket_type
         FROM ${feedSummaryRef()}
         WHERE agency_code = '${sqlStr(upper)}'
           AND ${sqlCommentWindowOpen(true)}
         ORDER BY comment_end_date ASC
         LIMIT ${limit}
-      `);
+      `, ROLLUP_CACHE);
     },
-    [runQuery, isReady]
+    [runCachedQuery, isReady]
   );
 
   /** An agency's most-commented dockets (all-time), highest first. */
@@ -1376,15 +1455,15 @@ export function useDuckDBService() {
     async (agencyCode: string, limit = 10): Promise<any[]> => {
       if (!isReady) throw new Error('DuckDB not ready');
       const upper = agencyCode.toUpperCase();
-      return runQuery<any>(`
+      return runCachedQuery<any>(`
         SELECT docket_id, agency_code, title, abstract, comment_count, comment_end_date, docket_type
         FROM ${feedSummaryRef()}
         WHERE agency_code = '${sqlStr(upper)}'
         ORDER BY comment_count DESC
         LIMIT ${limit}
-      `);
+      `, ROLLUP_CACHE);
     },
-    [runQuery, isReady]
+    [runCachedQuery, isReady]
   );
 
   /**
@@ -1399,7 +1478,7 @@ export function useDuckDBService() {
       if (codes.length === 0) return result;
 
       const list = codes.map(c => `'${sqlStr(c.toUpperCase())}'`).join(',');
-      const rows = await runQuery<{ agency_code: string; month: string; n: number }>(`
+      const rows = await runCachedQuery<{ agency_code: string; month: string; n: number }>(`
         SELECT agency_code,
                strftime(date_trunc('month', TRY_CAST(posted_date AS DATE)), '%Y-%m') AS month,
                COUNT(*) AS n
@@ -1408,7 +1487,7 @@ export function useDuckDBService() {
           AND TRY_CAST(posted_date AS DATE) >= date_trunc('month', CURRENT_DATE) - INTERVAL '${months - 1}' MONTH
         GROUP BY 1, 2
         ORDER BY 1, 2
-      `);
+      `, ROLLUP_CACHE);
 
       for (const code of codes) result.set(code.toUpperCase(), []);
       for (const r of rows) {
@@ -1417,7 +1496,7 @@ export function useDuckDBService() {
       }
       return result;
     },
-    [runQuery, isReady]
+    [runCachedQuery, isReady]
   );
 
   /** Single-agency monthly document volume — thin wrapper over the batch. */
@@ -1452,6 +1531,7 @@ export function useDuckDBService() {
     getCommentClustersMultiTier,
     getRandomDocketsWithComments,
     getRulemakingLifecycles,
+    getRulemakingLifecycleBenchmark,
     getDiscoverySignals,
     getCommentVolumeByDay,
     getDocumentById,
