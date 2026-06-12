@@ -287,3 +287,111 @@ Plus two manual spot-checks: (1) fetch FR XML for ~5 known NPRM/final pairs and 
 (else prioritize the `frDocNum`/RIN ETL fix first); section alignment works on the spot
 checks. Then pilot (§3 + §4.1 on ~50–100 dockets) before any scale-out, with §4.2/§4.3
 and the attachment pipeline (§5) following only on a successful pilot read.
+
+---
+
+## 8. Design review: refinements to the above
+
+A second pass over the plan against the actual machinery on `upstream/ui-investigation`
+turned up one outright trap and several upgrades. In rough priority order:
+
+### 8.1 The skeleton normalization would destroy the uptake signal — add a fourth representation
+
+§5 step 3 says "reuse the existing machinery", and for *dedup/stance on attachments*
+that's right. But §4.2's text-reuse scoring must **not** run on `toSkeleton` output:
+the skeleton transform strips *every digit and all punctuation by design* (its job is
+collapsing form-letter variants), and digits — thresholds, dollar amounts, compliance
+dates, CFR citations — are precisely the highest-value tokens for detecting adopted
+language in regulatory text. Reusing the dedup representation for reuse-detection would
+silently delete the signal while appearing to work.
+
+Fix: add a fourth representation to `lib/text/normalize.ts` alongside
+display/canonical/skeleton — call it `quotable`: lowercased, whitespace-collapsed,
+punctuation-light but **digit- and order-preserving**. It's additive (the existing three
+and their dual TS/SQL contract are untouched) and keeps normalization decisions in the
+one shared spec file where they already live.
+
+### 8.2 Diff the codified law too: eCFR point-in-time as a second substrate
+
+The §3 plan assumes FR `<REGTEXT>` sections are comparable across stages. Often they
+aren't: final rules frequently publish only *amendatory instructions* ("revise paragraph
+(b)(2) to read…", `<AMDPAR>`) rather than full section text, so there may be no final-side
+section to align the NPRM's proposed section against. Parsing amendatory instructions
+correctly is a known tar pit.
+
+The eCFR versioner API serves full point-in-time CFR XML at any date (coverage back to
+~2017). For any final rule, "CFR part the day before the effective date" vs. "the day
+after" is an *exact*, parse-free before/after diff of the codified outcome. Hybrid
+substrate: FR XML for the preamble and the NPRM's proposed text (which never gets
+codified if not adopted), eCFR for the final state. Add to the Phase 0 spot checks:
+measure what share of cohort final rules publish full replacement sections vs.
+instructions-only — that number decides how much weight the eCFR leg must carry. The
+2017 floor also argues for stratifying the cohort by era and accepting weaker alignment
+confidence pre-2017.
+
+### 8.3 Build version chains from the FR side, not the regulations.gov side
+
+`getRulemakingLifecycles` pairs `MIN(posted_date)` of 'Proposed Rule' against
+`MIN(posted_date)` of 'Rule'. Fine for duration percentiles; wrong as a diff manifest —
+corrections are typed 'Rule' (false short lifecycles, near-empty diffs), comment-period
+extensions and supplemental NPRMs blur stages, multi-NPRM dockets collapse. The FR side
+has what the regulations.gov mirror lacks: finer `document_type`/`subtype`,
+`correction_of` links, and RIN. Chain construction should be: group FR docs by RIN (fall
+back to `docket_ids_json`), order by `publication_date`, fold corrections into their
+parent, and diff *adjacent* versions — NPRM→final endpoints are then just one derived
+pair among several. This also makes RIN retention the single highest-leverage ETL fix in
+the whole plan, ahead of `frDocNum`.
+
+### 8.4 Numeric-parameter deltas as a cheap §4.3 precursor
+
+Before any LLM entailment pass: extract `(quantity, unit, surrounding context)` tuples
+from aligned sections in both versions and diff them. "Threshold moved from 250 to 500",
+"compliance date slipped a year" are exactly what comment campaigns ask for, and a
+changed number in a section matched to a cluster's ask is near-ground-truth resolution
+evidence — deterministic, explainable, no model. Run it as §4.3a; reserve the LLM judge
+for the asks that aren't numeric.
+
+### 8.5 Content-hash dedup before any attachment download or OCR
+
+Campaign dynamics (see `templates.ts` — single families covering >50% of a docket) apply
+to attachments too: the same PDF is attached thousands of times, and `formats[]` lists
+the same content in multiple formats. Triage by HEAD `content-length`/ETag before
+download, hash after download, extract/OCR **unique hashes only**, and carry
+`n_duplicates` forward as the campaign weight. On orchestrated dockets this should cut
+extraction volume by an order of magnitude; it also gives attachment-level campaign
+detection (same PDF across "unique" comment bodies) for free.
+
+### 8.6 Calibration you get for free, and the gold set you still need
+
+Preamble response units routinely state their own counts ("we received 12 comments
+requesting X"). Comparing those stated counts against matched-cluster sizes estimates
+the §4.1 matcher's recall with zero hand-labeling. It doesn't replace the small gold set
+(~20 dockets, a few hundred response units, hand-matched) needed to measure *precision*
+before any rate is published — and the matcher should abstain below threshold rather
+than force-match, with abstentions reported.
+
+### 8.7 IDF-weighted shingles instead of hand-built stoplists
+
+§4.2's stoplist of statutory boilerplate is better derived than curated: weight shingles
+by inverse document frequency over the whole comment corpus + an FR background sample.
+Statutory citations, agency names, and APA boilerplate fall out automatically; matches
+on rare phrasing dominate the score. Pairs naturally with winnowed fingerprinting
+(MOSS-style) over the `quotable` representation for scale.
+
+### 8.8 Publish components, not a composite score
+
+Resist the single per-docket "efficacy score." Plasticity, acknowledgment rate,
+acceptance rate, and uptake share answer different questions, fail in different ways,
+and carry different confidence; a composite invites reading the dashboard as an agency
+report card with false precision. Surface them separately, each with its quality flag
+(`alignment_confidence`, `extraction_quality`, match abstention rate), in the factual
+labeled-approximate prose register `lib/comments/findings.ts` already establishes.
+
+### 8.9 Pilot selection: include validation anchors
+
+The lab panels already designate HUD-2026-0529 (organic) and ATF-2023-0002
+(orchestrated) as demo dockets — keep both in the pilot. Add a handful of rulemakings
+where the agency's response to comments is documented public record (well-litigated or
+well-studied rules), so the metrics can be checked directionally against known outcomes
+rather than only against each other. Stratify the rest by agency, comment volume, and
+era.
