@@ -1,5 +1,10 @@
 # Rule-text change & comment efficacy: feasibility analysis
 
+> This is the analysis/rationale. The actionable work split out of it lives in three
+> companion docs: [Plan 1 — current pipeline & interface](./plan-current-pipeline.md)
+> (what ships without new sources), [Plan 2 — new data sources](./plan-new-data-sources.md)
+> (rule text, eCFR, attachment content), and [Plan 3 — sequencing](./plan-sequencing.md).
+
 A continuation of the ETL-gaps investigation (`docs/architecture.md` on
 `upstream/ui-investigation`). That work asked *what the pipeline drops and what the
 browser computes live*. This one asks two harder questions:
